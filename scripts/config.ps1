@@ -93,3 +93,21 @@ $Global:ServicesDisable = @(
   'SensorDataService'        # datos de sensores
   'RemoteAccess'             # enrutamiento y acceso remoto (RRAS)
 )
+
+# --- CAPABILITIES a remover (por PREFIJO; el script resuelve nombre+version instalado) ---
+#     Comenta para conservar. NUNCA drivers de red (Wifi/Ethernet), OpenSSH, DirectX, WebView2.
+$Global:CapabilitiesRemove = @(
+  'App.StepsRecorder'           # grabadora de pasos (deprecado)
+  'Browser.InternetExplorer'    # IE 11 legacy  (toggle: coments si usas IE mode)
+  'MathRecognizer'              # reconocimiento matematico (tactil)
+  'Media.WindowsMediaPlayer'    # WMP CLASICO legacy (el moderno = appx ZuneMusic, se conserva)
+  'Language.Handwriting'        # escritura a mano (no hay tactil) (toggle)
+  # WorkFolders NO va aca: como capability da error offline y queda "Staged" (inofensivo).
+  # Se apaga por la FEATURE 'WorkFolders-Client' (abajo), que es lo efectivo.
+)
+
+# --- FEATURES (optional features) a deshabilitar (nombre EXACTO) ---
+$Global:FeaturesDisable = @(
+  'WindowsMediaPlayer'   # app WMP legacy. NO tocar 'MediaPlayback' (motor de reproduccion)
+  'WorkFolders-Client'   # Work Folders
+)

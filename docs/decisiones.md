@@ -60,10 +60,10 @@
 - [x] WIM reducido a **solo Pro** (index 1) y montado en `work\mount`.
 - [x] **Fase 1 — appx:** 19 removidos, 28 conservados (verificado; deps/Xbox/codecs intactos).
 - [x] **Fase 2 — OneDrive fuera** + helper de hives offline (verificado, sin hives colgados).
-- [ ] **Fase 3 — privacidad/policies** (telemetría, Copilot, Recall, ads) → SOFTWARE hive.
-- [ ] **Fase 4 — servicios** (DiagTrack, dmwappushservice, etc.) → SYSTEM hive.
-- [ ] **Fase 5 — UI tweaks** (explorer, taskbar, ContentDeliveryManager, Bing web off) → DEFAULT hive.
-- [ ] **Fase 6 — features/capabilities** (WMP legacy, SMB1, PowerShell 2.0…) → DISM.
+- [x] **Fase 3 — privacidad/policies** (15 policies: telemetría, Copilot, Recall, ads) → SOFTWARE hive.
+- [x] **Fase 4 — servicios** (15 disabled; críticos de red/firewall/audio intactos) → SYSTEM hive.
+- [x] **Fase 5 — UI tweaks** (22 tweaks; explorer, taskbar, ads off, Bing web off) → DEFAULT hive.
+- [x] **Fase 6 — features/capabilities** (IE 11, WMP legacy, StepsRecorder, MathRecognizer, Handwriting, WorkFolders) → DISM.
 - [ ] **Fase 7 — SetupComplete.cmd + autounattend.xml** (cuenta local, scheduled tasks de telemetría).
 - [ ] **Fase 8 — commit del WIM + rearmar ISO** booteable (oscdimg).
 
