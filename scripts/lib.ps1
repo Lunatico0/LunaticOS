@@ -9,11 +9,23 @@
 
 function Write-Step($msg, [string]$color = 'Cyan') { Write-Host "  $msg" -ForegroundColor $color }
 
-# Ejecuta reg.exe y tira excepcion si falla (para load/add/delete/unload).
+# Escribe un DWORD devolviendo $true/$false (NO tira excepcion). Para lotes: si un valor
+# esta protegido/no es escribible, se registra y el resto de la fase sigue.
+function Set-RegDword($KeyPath, $Name, $Value) {
+  try { Invoke-Reg add $KeyPath /v $Name /t REG_DWORD /d $Value /f | Out-Null; return $true }
+  catch { return $false }
+}
+
+# Ejecuta reg.exe con reintentos (los access-denied transitorios sobre una colmena
+# cargada son comunes en invocaciones rapidas). Solo tira si falla las 3 veces.
 function Invoke-Reg {
   param([Parameter(ValueFromRemainingArguments = $true)] $RegArgs)
-  $out = & reg.exe @RegArgs 2>&1
-  if ($LASTEXITCODE -ne 0) { throw "reg $($RegArgs -join ' ') => $out" }
+  for ($i = 1; $i -le 3; $i++) {
+    $out = & reg.exe @RegArgs 2>&1
+    if ($LASTEXITCODE -eq 0) { return }
+    Start-Sleep -Milliseconds 250
+  }
+  throw "reg $($RegArgs -join ' ') => $out"
 }
 
 # Carga un hive offline en HKLM\<MountKey>, corre el scriptblock, y lo descarga si o si.
