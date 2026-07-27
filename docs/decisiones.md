@@ -56,9 +56,16 @@
 - [x] Repo inicializado (`git init`, branch `main`), `README.md`, `.gitignore`.
 - [x] Decisiones asentadas (este doc).
 - [x] ADK 24H2 (Deployment Tools) instalado — `oscdimg` 2.56 + DISM 10.0.26100.2454.
-- [ ] ISO 25H2 Pro descargada (oficial Microsoft).
-- [ ] Pipeline offline (montar WIM → quitar appx → features → hives → SetupComplete → rearmar ISO).
-- [ ] Portar las 10 fases del plan original a operaciones offline + toggles.
+- [x] ISO 25H2 Pro descargada + **hash SHA-256 verificado** (`Win11_25H2_English_x64_v2.iso`).
+- [x] WIM reducido a **solo Pro** (index 1) y montado en `work\mount`.
+- [x] **Fase 1 — appx:** 19 removidos, 28 conservados (verificado; deps/Xbox/codecs intactos).
+- [x] **Fase 2 — OneDrive fuera** + helper de hives offline (verificado, sin hives colgados).
+- [ ] **Fase 3 — privacidad/policies** (telemetría, Copilot, Recall, ads) → SOFTWARE hive.
+- [ ] **Fase 4 — servicios** (DiagTrack, dmwappushservice, etc.) → SYSTEM hive.
+- [ ] **Fase 5 — UI tweaks** (explorer, taskbar, ContentDeliveryManager, Bing web off) → DEFAULT hive.
+- [ ] **Fase 6 — features/capabilities** (WMP legacy, SMB1, PowerShell 2.0…) → DISM.
+- [ ] **Fase 7 — SetupComplete.cmd + autounattend.xml** (cuenta local, scheduled tasks de telemetría).
+- [ ] **Fase 8 — commit del WIM + rearmar ISO** booteable (oscdimg).
 
 ## Fuentes viejas a portar (raíz de CodeByPittana)
 
