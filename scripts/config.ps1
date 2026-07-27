@@ -69,3 +69,27 @@ $Global:Flags = @{
   DisableRecall   = $true
   BypassMsAccount = $true   # cuenta local en el OOBE (autounattend)
 }
+
+# --- SERVICIOS a deshabilitar (Start=4). Solo los "seguros" del plan. ---
+#     Regla: "Manual > Disabled cuando dudes". NUNCA red/cripto/audio/update/seguridad/anticheat.
+#     Comenta cualquier linea para conservar ese servicio.
+$Global:ServicesDisable = @(
+  'DiagTrack'                # telemetria (Connected User Experiences)
+  'dmwappushservice'         # WAP push (telemetria)
+  'WerSvc'                   # Windows Error Reporting
+  'MapsBroker'               # mapas descargados
+  'lfsvc'                    # geolocalizacion
+  'RetailDemo'               # modo demo de tienda
+  'Fax'                      # fax
+  'WpcMonSvc'                # control parental
+  'WMPNetworkSvc'            # uso compartido de Windows Media Player
+  'MessagingService'         # SMS / mensajeria
+  'PimIndexMaintenanceSvc'   # indexado de contactos
+  'AJRouter'                 # AllJoyn (IoT)
+  'WalletService'            # billetera
+  'SharedRealitySvc'         # Mixed Reality
+  'SensorService'            # sensores
+  'SensrSvc'                 # monitoreo de sensores
+  'SensorDataService'        # datos de sensores
+  'RemoteAccess'             # enrutamiento y acceso remoto (RRAS)
+)
