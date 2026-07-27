@@ -33,7 +33,6 @@ $Global:AppxRemove = @(
   'Microsoft.Windows.DevHome'
   'Microsoft.WindowsFeedbackHub'
   'MicrosoftCorporationII.QuickAssist'
-  'MicrosoftWindows.Client.WebExperience'   # Widgets (News & Interests)
   'MicrosoftWindows.CrossDevice'
   'Microsoft.WindowsAlarms'
   'Microsoft.MicrosoftStickyNotes'
@@ -55,6 +54,8 @@ $Global:AppxKeep = @(
   'Microsoft.XboxIdentityProvider','Microsoft.XboxSpeechToTextOverlay'
   # Zona gris resuelta → DEJAR
   'Microsoft.BingSearch','Microsoft.ZuneMusic','Microsoft.WindowsCamera'
+  # Widgets: se CONSERVA (el usuario quiere el clima en la taskbar sin ads; ver flag ShowWeatherWidget)
+  'MicrosoftWindows.Client.WebExperience'
   # Codecs — sacarlos rompe reproduccion de video/imagenes
   'Microsoft.AV1VideoExtension','Microsoft.AVCEncoderVideoExtension','Microsoft.HEIFImageExtension'
   'Microsoft.HEVCVideoExtension','Microsoft.MPEG2VideoExtension','Microsoft.RawImageExtension'
@@ -67,7 +68,8 @@ $Global:Flags = @{
   KillTelemetry   = $true   # DiagTrack + policy + scheduled tasks
   DisableCopilot  = $true
   DisableRecall   = $true
-  BypassMsAccount = $true   # cuenta local en el OOBE (autounattend)
+  BypassMsAccount   = $true   # cuenta local en el OOBE (autounattend)
+  ShowWeatherWidget = $true   # clima en la taskbar (Widgets). En 25H2 el feed MSN viene OFF por defecto.
 }
 
 # --- SERVICIOS a deshabilitar (Start=4). Solo los "seguros" del plan. ---

@@ -34,8 +34,6 @@ $pol = @(
   @{k='Policies\Microsoft\Windows\CloudContent'; v='DisableWindowsConsumerFeatures';     d=1}
   @{k='Policies\Microsoft\Windows\CloudContent'; v='DisableConsumerAccountStateContent'; d=1}
   @{k='Policies\Microsoft\Windows\CloudContent'; v='DisableCloudOptimizedContent';       d=1}
-  # Widgets (refuerzo; el appx WebExperience ya se saco en fase 1)
-  @{k='Policies\Microsoft\Dsh'; v='AllowNewsAndInterests'; d=0}
   # Advertising ID
   @{k='Policies\Microsoft\Windows\AdvertisingInfo'; v='DisabledByGroupPolicy'; d=1}
   # Activity feed / timeline
@@ -45,6 +43,13 @@ $pol = @(
   # Location
   @{k='Policies\Microsoft\Windows\LocationAndSensors'; v='DisableLocation'; d=1}
 )
+
+# Widgets: si NO se quiere el clima en la taskbar, se apagan por policy. Si se quiere (default,
+# $Flags.ShowWeatherWidget), se dejan de fabrica -> en 25H2 el feed MSN viene OFF por defecto (clima sin ads).
+if (-not $Flags.ShowWeatherWidget) {
+  $pol += @{ k='Policies\Microsoft\Dsh'; v='AllowNewsAndInterests'; d=0 }
+  Write-Host "  (Widgets DESACTIVADOS por ShowWeatherWidget=false)" -ForegroundColor DarkGray
+}
 
 Write-Host "== Fase 3: privacidad / policies (SOFTWARE hive) ==" -ForegroundColor Cyan
 if ($DryRun) {
