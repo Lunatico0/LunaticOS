@@ -41,7 +41,28 @@ win11-debloat-iso/
 
 ## Uso
 
-_(Pendiente — se documenta cuando el pipeline esté armado.)_
+Consola **como Administrador**. Poné la ISO oficial de Win11 25H2 en `work\` y corré las fases en orden:
+
+```powershell
+cd scripts
+.\00-prepare-wim.ps1        # exporta Pro de la ISO original y monta el WIM
+.\01-remove-appx.ps1        # quita appx bloat (Widgets/clima se CONSERVAN)
+.\02-remove-onedrive.ps1    # OneDrive fuera (archivos + hives)
+.\03-privacy-policies.ps1   # telemetria, Copilot, Recall, ads (SOFTWARE hive)
+.\04-services.ps1           # servicios de telemetria a Disabled (SYSTEM hive)
+.\05-ui-tweaks.ps1          # explorer/taskbar dev-friendly, sin ads (DEFAULT hive)
+.\06-features.ps1           # IE, WMP legacy, WorkFolders, etc. (DISM)
+.\07-inject-runtime.ps1     # SetupComplete.cmd (tasks + quitar Edge) + autounattend.xml
+.\08-build-iso.ps1          # cierra el WIM y arma la ISO booteable
+```
+
+**Para ajustar sin programar:** editá `scripts\config.ps1` — listas de appx/servicios/features/capabilities
+y flags (`ShowWeatherWidget`, `RemoveOneDrive`, etc.). Cada compa lo tunea a su gusto sin tocar la lógica.
+
+### Grabar a USB
+
+El `install.wim` pesa >4 GB, así que **no entra en un pendrive FAT32 común**. Usá **[Rufus](https://rufus.ie)**:
+elegí la ISO, esquema **GPT / UEFI**; Rufus parte el WIM solo. Queda listo para bootear e instalar.
 
 ## Aviso
 

@@ -64,8 +64,16 @@
 - [x] **Fase 4 — servicios** (15 disabled; críticos de red/firewall/audio intactos) → SYSTEM hive.
 - [x] **Fase 5 — UI tweaks** (22 tweaks; explorer, taskbar, ads off, Bing web off) → DEFAULT hive.
 - [x] **Fase 6 — features/capabilities** (IE 11, WMP legacy, StepsRecorder, MathRecognizer, Handwriting, WorkFolders) → DISM.
-- [ ] **Fase 7 — SetupComplete.cmd + autounattend.xml** (cuenta local, scheduled tasks de telemetría).
-- [ ] **Fase 8 — commit del WIM + rearmar ISO** booteable (oscdimg).
+- [x] **Fase 7 — SetupComplete.cmd + autounattend.xml** (cuenta local, teclado ES+EN, quitar Edge, tasks telemetría).
+- [x] **Fase 8 — commit del WIM + rearmar ISO** booteable (oscdimg).
+
+## RESULTADO ✅ — ISO generada (2026-07-27)
+
+`work\Win11_25H2_Pro_debloat.iso` (7.44 GB) — Windows 11 **Pro 25H2** debloateado, booteable UEFI+BIOS.
+Verificado: install.wim = solo Pro, autounattend en raíz, boot sectors presentes.
+
+**Correcciones sobre el plan original:** Widgets/clima CONSERVADOS (toggle `ShowWeatherWidget`, feed MSN
+off por defecto en 25H2); Edge (navegador) se quita en el 1er arranque vía SetupComplete preservando WebView2.
 
 ## Fuentes viejas a portar (raíz de CodeByPittana)
 
