@@ -1,0 +1,24 @@
+# === Artefactos pesados de trabajo — NUNCA al repo ===
+work/
+*.iso
+*.wim
+*.esd
+*.swm
+*.cab
+
+# === Datos personales de uso (medición propia, no compartible) ===
+uso.csv
+servicios.csv
+*.personal.csv
+
+# === Logs y temporales ===
+*.log
+*.tmp
+mount/
+
+# === OS / editor ===
+Thumbs.db
+desktop.ini
+.DS_Store
+.vs/
+.idea/
