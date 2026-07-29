@@ -71,7 +71,13 @@ set "LIMPIA=%SystemRoot%\Setup\Scripts\limpiar-edge.cmd"
 >>"%LIMPIA%" echo   del /f /q "%%%%U\AppData\Roaming\Microsoft\Internet Explorer\Quick Launch\User Pinned\TaskBar\Microsoft Edge.lnk" ^>nul 2^>^&1
 >>"%LIMPIA%" echo )
 >>"%LIMPIA%" echo del "%%~f0" ^>nul 2^>^&1
-reg add "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\RunOnce" /v ZZLimpiarEdge /t REG_SZ ^
+REM     EL PREFIJO 'AB' IMPORTA. RunOnce ejecuta sus entradas en orden ALFABETICO y
+REM     de forma SECUENCIAL, esperando que cada una termine. Esta entrada se llamaba
+REM     "ZZLimpiarEdge" y quedaba DESPUES del instalador de programas, que tarda 20+
+REM     minutos: nunca llegaba a correr y el acceso directo de Edge quedaba visible.
+REM     Verificado en VM: el .lnk de Edge seguia en el menu Inicio del usuario.
+REM     Orden actual:  AA personalizar -> AB limpiar Edge -> ZZ instalar programas.
+reg add "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\RunOnce" /v ABLunaticOSLimpiarEdge /t REG_SZ ^
   /d "cmd.exe /c \"%SystemRoot%\Setup\Scripts\limpiar-edge.cmd\"" /f >nul 2>&1
 
 REM --- Autolimpieza ---

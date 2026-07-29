@@ -399,6 +399,91 @@ if ($Verify) {
       Where-Object { $_.Name -notin @('Public','Default','Default User','All Users') } |
       ForEach-Object { Write-Host "  $($_.Name)" }
 
+    # ------------------------------------------------------------------------
+    #  PERSONALIZACION: lo que pidio el perfil vs lo que quedo en el hive
+    # ------------------------------------------------------------------------
+    # Esto es lo que distingue "Windows lo ignoro" de "nuestro script no lo escribio".
+    # Sin este chequeo, un tema que no se aplica es indistinguible de un bug propio.
+    Write-Host "`n--- PERSONALIZACION: perfil vs hive del usuario ---" -ForegroundColor Cyan
+    $perfilPath = Join-Path $CFG.Root 'perfil.json'
+    $pers = $null
+    if (Test-Path $perfilPath) {
+      try { $pers = (Get-Content $perfilPath -Raw | ConvertFrom-Json).personalizacion } catch { }
+    }
+    $userHive = Get-ChildItem "$d\Users" -Directory -Force -EA SilentlyContinue |
+                  Where-Object { $_.Name -notin @('Public','Default','Default User','All Users','defaultuser0') } |
+                  ForEach-Object { Join-Path $_.FullName 'NTUSER.DAT' } |
+                  Where-Object { Test-Path $_ } | Select-Object -First 1
+    if (-not $userHive) {
+      Write-Host "  (no encontre NTUSER.DAT de un usuario real)" -ForegroundColor Yellow
+    } else {
+      & reg.exe load HKLM\VRF_USR $userHive 2>&1 | Out-Null
+      function RegVal($sub, $name) {
+        $q = (& reg.exe query "HKLM\VRF_USR\$sub" /v $name 2>&1) -join "`n"
+        if ($q -match '0x([0-9a-fA-F]+)') { return [Convert]::ToInt32($Matches[1], 16) }
+        if ($q -match "$name\s+REG_SZ\s+(.*)")  { return $Matches[1].Trim() }
+        return $null
+      }
+      $themes = 'Software\Microsoft\Windows\CurrentVersion\Themes\Personalize'
+      $adv    = 'Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced'
+
+      $checks = @(
+        @{ key='tema-oscuro';       desc='tema oscuro';           got=(RegVal $themes 'AppsUseLightTheme'); want=0 }
+        @{ key='sin-transparencia'; desc='sin transparencia';     got=(RegVal $themes 'EnableTransparency'); want=0 }
+        @{ key='taskbar-izquierda'; desc='taskbar a la izquierda';got=(RegVal $adv 'TaskbarAl');            want=0 }
+        @{ key='reloj-segundos';    desc='segundos en el reloj';  got=(RegVal $adv 'ShowSecondsInSystemClock'); want=1 }
+        @{ key='explorer-compacto'; desc='explorer compacto';     got=(RegVal $adv 'UseCompactMode');       want=1 }
+        @{ key='acento-en-taskbar'; desc='acento en taskbar';     got=(RegVal $themes 'ColorPrevalence');   want=1 }
+      )
+      foreach ($c in $checks) {
+        $pedido = if ($pers -and $null -ne $pers.($c.key)) { [bool]$pers.($c.key) } else { $null }
+        $escrito = ($c.got -eq $c.want)
+        if ($null -eq $pedido) { Write-Host ("  (no esta en el perfil) {0}" -f $c.desc) -ForegroundColor DarkGray; continue }
+        if ($pedido -and $escrito) {
+          Write-Host ("  OK       {0}: pedido y ESCRITO en el hive" -f $c.desc) -ForegroundColor Green
+        } elseif ($pedido -and -not $escrito) {
+          Write-Host ("  NO PEGO  {0}: lo pediste y el hive tiene {1} (esperado {2})" -f $c.desc, $c.got, $c.want) -ForegroundColor Red
+        } elseif (-not $pedido -and $escrito) {
+          Write-Host ("  DE MAS   {0}: NO lo pediste y quedo aplicado" -f $c.desc) -ForegroundColor Yellow
+        } else {
+          Write-Host ("  ok       {0}: no pedido, no aplicado" -f $c.desc) -ForegroundColor DarkGray
+        }
+      }
+      # Menu contextual clasico: es la EXISTENCIA de la clave, no un valor
+      $clsid = 'Software\Classes\CLSID\{86ca1aa0-34aa-4e8b-a509-50c905bae2a2}\InprocServer32'
+      & reg.exe query "HKLM\VRF_USR\$clsid" 2>&1 | Out-Null
+      $menuOk = ($LASTEXITCODE -eq 0)
+      if ($pers -and $null -ne $pers.'menu-clasico') {
+        if ([bool]$pers.'menu-clasico' -eq $menuOk) { Write-Host ("  OK       menu contextual clasico (clave presente={0})" -f $menuOk) -ForegroundColor Green }
+        else { Write-Host ("  NO PEGO  menu contextual clasico: pedido={0} presente={1}" -f [bool]$pers.'menu-clasico', $menuOk) -ForegroundColor Red }
+      }
+      # Color de acento
+      $accent = RegVal 'Software\Microsoft\Windows\DWM' 'AccentColor'
+      if ($accent) { Write-Host ("  info     AccentColor = 0x{0:X8}" -f $accent) -ForegroundColor DarkGray }
+      & reg.exe unload HKLM\VRF_USR 2>&1 | Out-Null
+    }
+
+    # ------------------------------------------------------------------------
+    #  PROGRAMAS: que dice el log del instalador
+    # ------------------------------------------------------------------------
+    Write-Host "`n--- PROGRAMAS (log del instalador de winget) ---" -ForegroundColor Cyan
+    $appLog = "$d\ProgramData\LunaticOS\install-apps.log"
+    if (Test-Path $appLog) {
+      $lines = Get-Content $appLog
+      $ok   = @($lines | Select-String -Pattern '^\s*\d+:\d+:\d+\s+  OK ' -AllMatches)
+      $bad  = @($lines | Select-String -Pattern 'FALLO ')
+      Write-Host ("  instalados OK: {0}   fallidos: {1}" -f $ok.Count, $bad.Count) -ForegroundColor $(if ($bad.Count) { 'Yellow' } else { 'Green' })
+      $lines | Select-String -Pattern 'resumen:|winget todavia|sin red|ERROR' |
+        Select-Object -Last 5 | ForEach-Object { Write-Host "    $($_.Line.Trim())" -ForegroundColor DarkGray }
+      if ($bad.Count) { $bad | Select-Object -First 8 | ForEach-Object { Write-Host "    $($_.Line.Trim())" -ForegroundColor Yellow } }
+    } else {
+      Write-Host "  no hay log: el instalador no llego a correr (o todavia esta corriendo)" -ForegroundColor Yellow
+    }
+    $pend = Get-ChildItem "$d\Users" -Directory -Force -EA SilentlyContinue |
+              ForEach-Object { Join-Path $_.FullName 'Desktop\LunaticOS - descargas pendientes.txt' } |
+              Where-Object { Test-Path $_ } | Select-Object -First 1
+    if ($pend) { Write-Host "  lista de descargas manuales dejada en el escritorio" -ForegroundColor Green }
+
     Write-Host "`n--- BLOAT: appx que sacamos (no deberian aparecer) ---" -ForegroundColor Cyan
     $found = @()
     foreach ($a in @('Clipchamp','BingNews','MicrosoftOfficeHub','YourPhone','MSTeams','DevHome')) {

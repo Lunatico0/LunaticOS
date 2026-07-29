@@ -124,5 +124,110 @@ if ($wp) {
   Write-Step "sin wallpaper propio (poné un .jpg/.png en $WallpaperDir si querés uno)" 'DarkGray'
 }
 
+# ===========================================================================
+#  REAPLICAR EN EL PRIMER LOGIN (RunOnce)
+# ===========================================================================
+#  ESCRIBIR EL HIVE DEFAULT NO ALCANZA. Medido en VM, auditando el hive del
+#  usuario despues de instalar:
+#
+#    tema oscuro ............ pedido 0, quedo 1   <- EL OOBE LO PISO
+#    color de acento ........ pedido teal, quedo 0xFFD47800 (el azul de Windows)
+#    sin transparencia ...... OK
+#    taskbar izquierda ...... OK
+#    segundos en el reloj ... OK
+#
+#  O sea: la escritura offline funciona (tres valores del MISMO hive quedaron
+#  bien), pero el OOBE sobreescribe ESPECIFICAMENTE el tema y el acento cuando
+#  crea el perfil del usuario. No hay forma de ganarle desde offline: corre despues.
+#
+#  Y hay un segundo problema, distinto: el menu contextual clasico vive en
+#  Software\Classes, que en HKCU NO esta en NTUSER.DAT sino en UsrClass.dat, un
+#  hive SEPARADO. Escribirlo en NTUSER.DAT no hace absolutamente nada.
+#
+#  Los dos se resuelven igual: reaplicar en el primer login, cuando el OOBE ya
+#  termino y HKCU apunta a los hives de verdad.
+# ===========================================================================
+$scriptsDir = Join-Path $mount 'Windows\Setup\Scripts'
+New-Item -ItemType Directory -Force -Path $scriptsDir | Out-Null
+
+$sb = New-Object System.Text.StringBuilder
+function Add-L($t) { [void]$sb.AppendLine($t) }
+
+Add-L '# LunaticOS - reaplica la personalizacion en el primer login.'
+Add-L '# Existe porque el OOBE pisa el tema y el acento, y porque Software\Classes'
+Add-L '# vive en UsrClass.dat y no en NTUSER.DAT (ver fase 10).'
+Add-L '$ErrorActionPreference = "Continue"'
+Add-L '$log = "$env:ProgramData\LunaticOS\personalizar.log"'
+Add-L 'New-Item -ItemType Directory -Force -Path (Split-Path $log) | Out-Null'
+Add-L 'function L($m) { $s = "{0}  {1}" -f (Get-Date -Format "HH:mm:ss"), $m; Write-Host $s; Add-Content -Path $log -Value $s }'
+Add-L 'L "=== reaplicando personalizacion ==="'
+Add-L ''
+
+foreach ($it in $userItems) {
+  Add-L ("# --- {0} ---" -f $it.Name)
+  foreach ($r in $it.Regs) {
+    $key = if ($r.k) { "HKCU:\$($r.k)" } else { 'HKCU:' }
+    Add-L ("New-Item -Path '{0}' -Force -ErrorAction SilentlyContinue | Out-Null" -f $key)
+    if ([string]::IsNullOrEmpty($r.v)) {
+      # Valor "(Default)" vacio: en runtime se escribe con el nombre '(default)'
+      Add-L ("Set-ItemProperty -Path '{0}' -Name '(default)' -Value '' -ErrorAction SilentlyContinue" -f $key)
+    } elseif ($r.t -eq 'sz') {
+      Add-L ("Set-ItemProperty -Path '{0}' -Name '{1}' -Value '{2}' -Type String -ErrorAction SilentlyContinue" -f $key, $r.v, $r.d)
+    } else {
+      Add-L ("Set-ItemProperty -Path '{0}' -Name '{1}' -Value {2} -Type DWord -ErrorAction SilentlyContinue" -f $key, $r.v, [int]$r.d)
+    }
+  }
+  Add-L ("L 'aplicado: {0}'" -f ($it.Name -replace "'", "''"))
+  Add-L ''
+}
+
+# El acento necesita ademas AccentPalette (blob de 8 tonos) para que TODA la UI
+# tome el color. Sin eso, partes de la interfaz siguen con el azul viejo.
+$acento = @($userItems | Where-Object { $_.Key -like 'acento-*' -and $_.Key -ne 'acento-en-taskbar' })
+if ($acento) {
+  $col = ($acento[0].Regs | Where-Object { $_.v -eq 'AccentColor' } | Select-Object -First 1).d
+  Add-L '# --- AccentPalette: la UI usa 8 tonos derivados, no solo AccentColor ---'
+  Add-L ("`$c = [uint32]{0}" -f $col)
+  Add-L '$b = ($c -shr 16) -band 0xFF; $g = ($c -shr 8) -band 0xFF; $r8 = $c -band 0xFF'
+  Add-L '$pal = New-Object byte[] 32'
+  Add-L '# 8 entradas BGRA: de mas claro a mas oscuro, escalando el color base.'
+  Add-L '$facts = @(2.2, 1.8, 1.4, 1.0, 0.75, 0.55, 0.4, 0.3)'
+  Add-L 'for ($i = 0; $i -lt 8; $i++) {'
+  Add-L '  $f = $facts[$i]'
+  Add-L '  $pal[$i*4+0] = [byte][Math]::Min(255, [int]($b  * $f))'
+  Add-L '  $pal[$i*4+1] = [byte][Math]::Min(255, [int]($g  * $f))'
+  Add-L '  $pal[$i*4+2] = [byte][Math]::Min(255, [int]($r8 * $f))'
+  Add-L '  $pal[$i*4+3] = 255'
+  Add-L '}'
+  Add-L 'Set-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Accent" -Name AccentPalette -Value $pal -Type Binary -ErrorAction SilentlyContinue'
+  Add-L 'L "AccentPalette escrito"'
+  Add-L ''
+}
+
+Add-L '# Reiniciar Explorer para que tome el tema, el acento y el menu contextual.'
+Add-L '# Sin esto hay que cerrar sesion: los cambios estan escritos pero no se ven,'
+Add-L '# y parece que el script no hizo nada.'
+Add-L 'L "reiniciando Explorer..."'
+Add-L 'Stop-Process -Name explorer -Force -ErrorAction SilentlyContinue'
+Add-L 'Start-Sleep -Seconds 3'
+Add-L 'if (-not (Get-Process explorer -ErrorAction SilentlyContinue)) { Start-Process explorer.exe }'
+Add-L 'L "=== listo ==="'
+Add-L 'Remove-Item -LiteralPath $PSCommandPath -Force -ErrorAction SilentlyContinue'
+
+Set-Content -Path (Join-Path $scriptsDir 'lunaticos-personalizar.ps1') -Value $sb.ToString() -Encoding UTF8
+Write-Step "generado lunaticos-personalizar.ps1 (reaplica en el primer login)" 'Green'
+
+# RunOnce con prefijo 'AA' A PROPOSITO: RunOnce ejecuta sus entradas en orden
+# alfabetico y de forma secuencial. La personalizacion es rapida y tiene que correr
+# ANTES del instalador de programas (ZZ...), que tarda 20+ minutos. Si quedara
+# despues, el usuario ve el tema claro durante toda la instalacion.
+Use-OfflineHive -HivePath (Join-Path $mount 'Windows\System32\config\SOFTWARE') -MountKey 'OFF_SW_PERS_RO' -Action {
+  param($root)
+  $cmd = 'powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "C:\Windows\Setup\Scripts\lunaticos-personalizar.ps1"'
+  Invoke-Reg add "$root\Microsoft\Windows\CurrentVersion\RunOnce" /v AALunaticOSPersonalizar /t REG_SZ /d $cmd /f
+}
+Write-Step "RunOnce AALunaticOSPersonalizar (corre antes que el instalador de apps)" 'Green'
+
 Write-Host ""
-Write-Host "Personalizacion aplicada como DEFAULT: el usuario puede cambiar todo desde Settings." -ForegroundColor Green
+Write-Host "Personalizacion: escrita en el hive DEFAULT + reaplicada en el primer login." -ForegroundColor Green
+Write-Host "Todo como DEFAULT, no como policy: el usuario cambia lo que quiera desde Settings." -ForegroundColor DarkGray

@@ -160,12 +160,17 @@ Write-Step "instalador generado: Windows\Setup\Scripts\lunaticos-apps.ps1 ($($wi
 # Va en RunOnce y NO en SetupComplete.cmd porque SetupComplete corre como SYSTEM
 # ANTES del OOBE: ahi winget no existe todavia y no hay usuario. RunOnce corre en
 # el primer login del usuario real, que es cuando winget si funciona.
+# El prefijo 'ZZ' es DELIBERADO: RunOnce corre sus entradas en orden alfabetico y
+# secuencial, esperando a que cada una termine. Esta tarda 20+ minutos bajando
+# programas, asi que va ULTIMA. Antes se llamaba "LunaticOSApps" y bloqueaba a la
+# limpieza de accesos directos de Edge, que quedaba encolada detras y no corria.
+# Orden:  AA personalizar (rapido) -> AB limpiar Edge (rapido) -> ZZ apps (lento).
 Use-OfflineHive -HivePath (Join-Path $mount 'Windows\System32\config\SOFTWARE') -MountKey 'OFF_SW_APPS' -Action {
   param($root)
   $cmd = 'powershell.exe -NoProfile -ExecutionPolicy Bypass -File "C:\Windows\Setup\Scripts\lunaticos-apps.ps1"'
-  Invoke-Reg add "$root\Microsoft\Windows\CurrentVersion\RunOnce" /v LunaticOSApps /t REG_SZ /d $cmd /f
+  Invoke-Reg add "$root\Microsoft\Windows\CurrentVersion\RunOnce" /v ZZLunaticOSApps /t REG_SZ /d $cmd /f
 }
-Write-Step "RunOnce registrado: se instalan en el primer login" 'Green'
+Write-Step "RunOnce ZZLunaticOSApps: se instalan en el primer login (ultimo de la cola)" 'Green'
 
 Write-Host ""
 Write-Host "Los programas se instalan solos en el primer arranque (hace falta internet)." -ForegroundColor Green
