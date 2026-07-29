@@ -345,18 +345,28 @@ function Show-MainMenu($p) {
     $nApps = @(Get-Picked $p.programas).Count
     $nFlag = @(Get-Picked $p.flags).Count
 
-    $sel = Show-TuiMenu -Subtitle "perfil: $(Split-Path $ProfilePath -Leaf)" -Entries @(
-      @{ Key='appx';  Label='1. Apps preinstaladas a quitar';   Info="$nAppx marcadas" }
-      @{ Key='svc';   Label='2. Servicios a deshabilitar';      Info="$nSvc marcados" }
-      @{ Key='feat';  Label='3. Features y capabilities';       Info="$nFeat marcadas" }
-      @{ Key='flags'; Label='4. Opciones del sistema';          Info="$nFlag activas" }
-      @{ Key='pers';  Label='5. Personalizacion (tema, color)'; Info="$nPers marcadas" }
-      @{ Key='apps';  Label='6. Programas a instalar';          Info="$nApps marcados" }
+    $perfilExiste = Test-Path $ProfilePath
+    $sel = Show-TuiMenu -Subtitle "perfil: $(Split-Path $ProfilePath -Leaf)$(if(-not $perfilExiste){' (todavia no guardado)'})" -Entries @(
+      @{ Key='appx';  Label='1. Apps preinstaladas a quitar';   Info="$nAppx marcadas"
+         Note='Appx provisioned de la imagen. Las [BLINDADO] se muestran para que veas que se conserva y por que, pero no se pueden marcar.' }
+      @{ Key='svc';   Label='2. Servicios a deshabilitar';      Info="$nSvc marcados"
+         Note='Los "opcional" dependen de tu hardware y tu uso: leé la nota de cada uno antes de marcarlo. Regla: Manual > Disabled cuando dudes.' }
+      @{ Key='feat';  Label='3. Features y capabilities';       Info="$nFeat marcadas"
+         Note='Componentes opcionales de Windows (IE 11, WMP legacy, escritura a mano, Work Folders).' }
+      @{ Key='flags'; Label='4. Opciones del sistema';          Info="$nFlag activas"
+         Note='Telemetria, Copilot, Recall, OneDrive, cuenta local, Widgets y el bloqueo de Edge.' }
+      @{ Key='pers';  Label='5. Personalizacion (tema, color)'; Info="$nPers marcadas"
+         Note='Todo se aplica como DEFAULT, no como policy: son un punto de partida y los cambias desde Settings cuando quieras.' }
+      @{ Key='apps';  Label='6. Programas a instalar';          Info="$nApps marcados"
+         Note='Se instalan solos por winget en el primer arranque (hace falta internet). Los drivers de GPU no estan en winget: te deja la lista con las URLs.' }
       @{ Key='-' }
-      @{ Key='gen';   Label='G. GENERAR LA ISO';               Info='~45-60 min'; Accent=$true }
-      @{ Key='save';  Label='S. Guardar perfil y salir';        Info='' }
+      @{ Key='gen';   Label='G. GENERAR LA ISO (guarda el perfil)'; Info='~45-60 min'; Accent=$true
+         Note='GUARDA el perfil.json y arranca el pipeline completo: rearma la imagen desde la ISO original. No cierres la consola.' }
+      @{ Key='save';  Label='S. Guardar perfil y salir';        Info='sin generar'
+         Note='Escribe el perfil.json y sale sin tocar la imagen. Sirve para dejar la seleccion lista y generar despues, o para compartir tu perfil.' }
       @{ Key='-' }
-      @{ Key='quit';  Label='Q. Salir sin guardar';             Info='' }
+      @{ Key='quit';  Label='Q. Salir sin guardar';             Info='descarta cambios'
+         Note='Sale SIN escribir el perfil.json: se pierde lo que marcaste en esta sesion.' }
     )
 
     switch ($sel) {
@@ -533,12 +543,19 @@ function Invoke-SelfTest {
   }
 
   Write-Host ''
-  if ($script:fail -eq 0) { Write-Host "  TODO OK ($($script:fail) fallas)" -ForegroundColor Green; return 0 }
-  Write-Host "  $($script:fail) FALLAS" -ForegroundColor Red
-  1
+  if ($script:fail -eq 0) { Write-Host "  TODO OK (0 fallas)" -ForegroundColor Green }
+  else { Write-Host "  $($script:fail) FALLAS" -ForegroundColor Red }
 }
 
-if ($SelfTest) { exit (Invoke-SelfTest) }
+if ($SelfTest) {
+  # OJO: NO usar `exit (Invoke-SelfTest)`. Cualquier cosa que una funcion emita al
+  # pipeline se suma a su valor de retorno, asi que el "0" final puede llegar como
+  # array y el exit code termina siendo otro. Reportaba TODO OK y salia con 1.
+  # Un exit code que miente es peor que no tenerlo: rompe cualquier CI que lo mire.
+  $script:fail = 0
+  Invoke-SelfTest
+  exit ([int]$script:fail)
+}
 
 # ===========================================================================
 #  MAIN

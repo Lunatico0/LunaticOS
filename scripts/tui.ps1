@@ -184,6 +184,16 @@ function Show-TuiMenu {
       Write-TuiLine ("{0}  {1,-42} {2}" -f $cur, $e.Label, $e.Info) $col
     }
     Write-TuiLine ''
+    # Nota del item seleccionado. Igual que en las checklists: si la UI no dice lo que
+    # va a pasar, el usuario tiene que adivinarlo. "Generar" guardaba el perfil sin
+    # avisar y nadie podia saberlo sin leer el codigo.
+    Write-TuiLine ('-' * $script:TuiWidth) 'DarkGray'
+    $note = $Entries[$idx].Note
+    if (-not $note) { $note = '' }
+    $wrapped = @(Wrap-TuiText $note ($script:TuiWidth - 4))
+    for ($i = 0; $i -lt 2; $i++) {
+      if ($i -lt $wrapped.Count) { Write-TuiLine ("  " + $wrapped[$i]) 'Cyan' } else { Write-TuiLine '' }
+    }
     Show-TuiFooter @('flechas mover   ENTER elegir   Q salir')
 
     $k = Get-TuiKey

@@ -40,7 +40,34 @@ win11-debloat-iso/
 └── work/      # scratch (gitignored): ISO original, WIM montado, ISO de salida
 ```
 
-## Uso
+## Uso rápido: LunaticOS (recomendado)
+
+Poné la ISO oficial de Windows 11 en `work\` y **doble clic en `LunaticOS.cmd`**.
+
+```
+LunaticOS.cmd          <- doble clic (se eleva solo a Administrador)
+```
+
+> **¿Por qué un `.cmd` y no el `.ps1`?** Windows asocia los `.ps1` al **editor**, no al
+> intérprete: doble clic en `LunaticOS.ps1` abre el Notepad y parece que está roto. El `.cmd`
+> sí se ejecuta, y además pide elevación solo (el pipeline monta imágenes y edita hives, necesita
+> Administrador).
+
+La herramienta hace todo:
+
+1. **Preflight** — admin, espacio en disco, ADK (lo descarga e instala si falta), ISO.
+2. **Selección** — apps, servicios, features, opciones, personalización y programas a instalar.
+   Con `*` en lo recomendado y **la explicación de cada ítem siempre a la vista**.
+3. **`perfil.json`** — guarda tu selección. Es **compartible**: le pasás el archivo a un compa y
+   genera la misma ISO que vos, sin volver a elegir nada.
+4. **Pipeline** — corre las 12 fases y arma la ISO.
+
+```powershell
+.\LunaticOS.ps1 -SelfTest    # 44 validaciones, sin UI ni build
+.\LunaticOS.ps1 -Apply       # usa el perfil.json existente y genera, sin abrir la TUI
+```
+
+## Uso manual (fase por fase)
 
 Consola **como Administrador**. Poné la ISO oficial de Win11 25H2 en `work\` y corré las fases en orden:
 
