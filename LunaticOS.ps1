@@ -412,24 +412,78 @@ function Invoke-Pipeline {
     @{ n='08-inject-runtime.ps1'; d='SetupComplete + autounattend' }
     @{ n='09-build-iso.ps1';      d='cerrar WIM y armar la ISO' }
   )
-  Clear-Host
-  Write-Host ''
-  Write-Host '  Generando la ISO. Esto tarda entre 45 y 60 minutos.' -ForegroundColor Cyan
-  Write-Host '  No cierres la consola. Si algo falla, el error queda a la vista.' -ForegroundColor DarkGray
-  Write-Host ''
-  $i = 0
-  foreach ($f in $fases) {
-    $i++
-    $path = Join-Path $root "scripts\$($f.n)"
-    if (-not (Test-Path $path)) { Write-Host "  [$i/$($fases.Count)] (no existe, salteo) $($f.n)" -ForegroundColor DarkGray; continue }
-    Write-Host ("  [{0}/{1}] {2} -- {3}" -f $i, $fases.Count, $f.n, $f.d) -ForegroundColor Cyan
-    & $path
-    if ($LASTEXITCODE -and $LASTEXITCODE -ne 0) {
-      Write-Host "  ABORTADO en $($f.n) (exit $LASTEXITCODE)" -ForegroundColor Red
-      return $false
-    }
+
+  # ==========================================================================
+  #  LOG A ARCHIVO. NO ES OPCIONAL.
+  #  La primera version no logueaba nada: cuando el pipeline se corto, la ventana
+  #  se cerro y se llevo el unico registro de lo que habia pasado. Un build de 45
+  #  minutos que falla sin dejar rastro es imposible de diagnosticar, y el usuario
+  #  se queda sin saber si tiene que empezar de nuevo.
+  # ==========================================================================
+  $logDir = Join-Path $root 'work\logs'
+  New-Item -ItemType Directory -Force -Path $logDir | Out-Null
+  $log = Join-Path $logDir ("build-{0}.log" -f (Get-Date -Format 'yyyyMMdd-HHmmss'))
+  function LogLine($t, $color = 'Gray') {
+    Write-Host $t -ForegroundColor $color
+    Add-Content -Path $log -Value $t -Encoding UTF8
   }
-  $true
+
+  # ==========================================================================
+  #  Y ACA VA EL OTRO ARREGLO: 'Continue', no 'Stop'.
+  #  Con ErrorActionPreference='Stop' (el default de este script) CUALQUIER error
+  #  no-terminante de una fase -- un stderr de dism, un warning -- se convierte en
+  #  terminante, mata el proceso entero y la ventana se cierra sin mostrar nada.
+  #  Las fases ya manejan sus propios errores y devuelven exit codes; el pipeline
+  #  las evalua fase por fase con try/catch. Se restaura al salir.
+  # ==========================================================================
+  $prevEAP = $ErrorActionPreference
+  $ErrorActionPreference = 'Continue'
+  try {
+    Clear-Host
+    LogLine ''
+    LogLine '  Generando la ISO. Tarda entre 45 y 60 minutos.' 'Cyan'
+    LogLine "  Log: $log" 'DarkGray'
+    LogLine '  No cierres la consola.' 'DarkGray'
+    LogLine ''
+    $inicio = Get-Date
+    $i = 0
+    foreach ($f in $fases) {
+      $i++
+      $path = Join-Path $root "scripts\$($f.n)"
+      if (-not (Test-Path $path)) { LogLine "  [$i/$($fases.Count)] (no existe, salteo) $($f.n)" 'DarkGray'; continue }
+      $t0 = Get-Date
+      LogLine ("  [{0}/{1}] {2} -- {3}" -f $i, $fases.Count, $f.n, $f.d) 'Cyan'
+      $global:LASTEXITCODE = 0
+      try {
+        & $path 2>&1 | ForEach-Object {
+          $s = "$_"
+          Write-Host $s
+          Add-Content -Path $log -Value $s -Encoding UTF8
+        }
+      } catch {
+        LogLine ''
+        LogLine "  ================ FALLO EN $($f.n) ================" 'Red'
+        LogLine "  $($_.Exception.Message)" 'Yellow'
+        if ($_.InvocationInfo) {
+          LogLine "  en $($_.InvocationInfo.ScriptName) linea $($_.InvocationInfo.ScriptLineNumber)" 'Yellow'
+          LogLine "  codigo: $($_.InvocationInfo.Line.Trim())" 'DarkGray'
+        }
+        LogLine "  Log completo: $log" 'White'
+        return $false
+      }
+      if ($LASTEXITCODE -and $LASTEXITCODE -ne 0) {
+        LogLine ''
+        LogLine "  ABORTADO en $($f.n) (exit $LASTEXITCODE)" 'Red'
+        LogLine "  Log completo: $log" 'White'
+        return $false
+      }
+      LogLine ("        ok ({0:mm\:ss})" -f ((Get-Date) - $t0)) 'DarkGreen'
+    }
+    LogLine ''
+    LogLine ("  Pipeline completo en {0:hh\:mm\:ss}" -f ((Get-Date) - $inicio)) 'Green'
+    $true
+  }
+  finally { $ErrorActionPreference = $prevEAP }
 }
 
 # ===========================================================================
@@ -579,15 +633,28 @@ switch ($action) {
   'gen' {
     Export-Profile $profile $ProfilePath (Get-Date -Format 'yyyy-MM-dd HH:mm')
     Set-GlobalsFromProfile $profile
-    if (Invoke-Pipeline) {
-      Write-Host ''
-      Write-Host '  ISO LISTA.' -ForegroundColor Green
+    $ok = Invoke-Pipeline
+    Write-Host ''
+    if ($ok) {
+      $iso = Join-Path $root 'work\Win11_25H2_Pro_debloat.iso'
+      Write-Host '  ================== ISO LISTA ==================' -ForegroundColor Green
+      if (Test-Path $iso) {
+        Write-Host ("  {0}" -f $iso) -ForegroundColor White
+        Write-Host ("  {0} GB   {1}" -f [math]::Round((Get-Item $iso).Length/1GB,2), (Get-Item $iso).LastWriteTime) -ForegroundColor White
+      }
       Write-Host '  Grabala con Ventoy (copiar el .iso) o con Rufus (GPT/UEFI).' -ForegroundColor White
       Write-Host '  Checklist de instalacion: docs\dia-d.md' -ForegroundColor DarkGray
+      Write-Host '  Probarla en una VM primero:  .\scripts\test-vm.ps1 -Reset -Boot' -ForegroundColor DarkGray
     } else {
-      Write-Host ''
-      Write-Host '  El pipeline se corto. Revisa el error de arriba.' -ForegroundColor Red
-      exit 1
+      Write-Host '  ============ EL PIPELINE SE CORTO ============' -ForegroundColor Red
+      Write-Host '  El detalle esta arriba y en work\logs\. La imagen quedo montada' -ForegroundColor Yellow
+      Write-Host '  en work\mount: podes corregir y correr la fase que fallo a mano,' -ForegroundColor Yellow
+      Write-Host '  sin volver a exportar el WIM (que son 20 minutos).' -ForegroundColor Yellow
     }
+    # SIEMPRE pausar. Si el usuario lanzo con doble clic, sin esto la ventana se
+    # cierra y se lleva el resultado -- salio bien? fallo? nunca lo sabe.
+    Write-Host ''
+    Show-TuiPause 'Enter para cerrar.'
+    if (-not $ok) { exit 1 }
   }
 }
