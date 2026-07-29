@@ -627,8 +627,15 @@ function Invoke-SelfTest {
     }
   }
   Chk 'todos los valores DWORD entran en uint32' ($overflow.Count -eq 0) ("-> " + ($overflow -join ', '))
-  $usaInt = (Get-Content (Join-Path $root 'scripts\10-personalizar.ps1') -Raw) -match '\[string\]\[int\]\$r\.d'
-  Chk 'la fase 10 convierte DWORD con [uint32] y no con [int]' (-not $usaInt)
+  # El test NO busca la firma exacta de un bug conocido, busca EL PATRON: cualquier
+  # cast de $r.d a [int]. La version anterior buscaba solo '[string][int]$r.d' y se
+  # le escapo un segundo '[int]$r.d' cinco lineas mas abajo, en el generador del
+  # script de runtime. Arregle una instancia, deje la otra, y el test dio verde.
+  # Cuando un bug es de CLASE, el test tiene que medir la clase.
+  $castsInt = @(Select-String -Path (Join-Path $root 'scripts\10-personalizar.ps1') `
+                              -Pattern '\[int\]\s*\$r\.d' -AllMatches)
+  Chk 'la fase 10 nunca castea $r.d a [int] (usa uint32)' ($castsInt.Count -eq 0) `
+      ("-> lineas: " + (($castsInt | ForEach-Object { $_.LineNumber }) -join ', '))
 
   # --- Perfil: ida y vuelta por JSON ---
   $p = New-DefaultProfile

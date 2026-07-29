@@ -181,7 +181,11 @@ foreach ($it in $userItems) {
     } elseif ($r.t -eq 'sz') {
       Add-L ("Set-ItemProperty -Path '{0}' -Name '{1}' -Value '{2}' -Type String -ErrorAction SilentlyContinue" -f $key, $r.v, $r.d)
     } else {
-      Add-L ("Set-ItemProperty -Path '{0}' -Name '{1}' -Value {2} -Type DWord -ErrorAction SilentlyContinue" -f $key, $r.v, [int]$r.d)
+      # [uint32] y NO [int], igual que en Write-Regs: los colores ARGB con alpha FF
+      # pasan de 2^31 y un cast a Int32 tira "Value was either too large or too small".
+      # Este era el SEGUNDO [int] del archivo: arregle uno y deje el otro, y el test
+      # no lo agarro porque buscaba la firma exacta del primero en vez del patron.
+      Add-L ("Set-ItemProperty -Path '{0}' -Name '{1}' -Value {2} -Type DWord -ErrorAction SilentlyContinue" -f $key, $r.v, [uint32]$r.d)
     }
   }
   Add-L ("L 'aplicado: {0}'" -f ($it.Name -replace "'", "''"))
