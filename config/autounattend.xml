@@ -1,28 +1,125 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  autounattend.xml - va en la RAIZ de la ISO.
+  autounattend.xml (ASCII puro a proposito: sin acentos, sin guiones dobles en comentarios)
+  Va en la RAIZ de la ISO.
+
   Objetivo: region Argentina, teclado espanol (LatAm) + ingles US adicional, UI ingles,
-  saltear pantallas basura del OOBE y HABILITAR cuenta local (BypassNRO) sin hardcodear password.
+  saltear las pantallas basura del setup y del OOBE, y crear CUENTA LOCAL sin pasar por
+  la pantalla de cuenta Microsoft.
   NO automatiza el particionado: el disco lo elegis vos a mano (mas seguro).
+
+  ===========================================================================
+  POR QUE EXISTE EL PASS windowsPE (no lo borres):
+
+  En el primer test (2026-07-27) este archivo NO se aplico. El log del setup
+  (C:\Windows\Panther\setupact.log) mostro:
+
+    UnattendSearchExplicitPath: Found unattend file at [D:\autounattend.xml];
+      examining for applicability.
+    UnattendSearchExplicitPath: [D:\autounattend.xml] does not meet criteria
+      to be used for this unattend pass.
+    SetupHost: Unattend not found. Releasing UnattendMgr object.
+    Callback_Unattend_InitiatePass: No unattend file was present, skipping
+      unattend settings passes
+
+  El instalador SI encuentra el archivo, pero lo evalua contra el pass en curso
+  (windowsPE). Como el archivo solo tenia 'specialize' y 'oobeSystem', lo
+  considero no aplicable y lo DESCARTO ENTERO. No lo guarda para los pases
+  siguientes. Resultado: pedia product key, pedia idioma y teclado, BypassNRO
+  nunca se escribia y el UserLocale quedaba en en-US.
+
+  Un solo defecto, cuatro sintomas. Con el pass windowsPE presente el archivo
+  se acepta y los tres pases se procesan.
+  ===========================================================================
 -->
 <unattend xmlns="urn:schemas-microsoft-com:unattend">
 
-  <settings pass="specialize">
-    <component name="Microsoft-Windows-Shell-Setup" processorArchitecture="amd64"
+  <!-- =====================================================================
+       PASS 1: windowsPE. Lo lee el instalador al arrancar del medio.
+       Sin este pass el archivo COMPLETO se descarta (ver cabecera).
+       ===================================================================== -->
+  <settings pass="windowsPE">
+
+    <component name="Microsoft-Windows-International-Core-WinPE" processorArchitecture="amd64"
                publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS"
                xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State"
                xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
-      <!-- Restaura la opcion de cuenta local en el OOBE (bypass del requisito de cuenta MS) -->
+      <!-- Idioma del instalador: ingles. Teclado: LatAm primario + ingles US. -->
+      <SetupUILanguage>
+        <UILanguage>en-US</UILanguage>
+      </SetupUILanguage>
+      <InputLocale>es-AR;en-US</InputLocale>
+      <SystemLocale>en-US</SystemLocale>
+      <UILanguage>en-US</UILanguage>
+      <UserLocale>es-AR</UserLocale>
+    </component>
+
+    <component name="Microsoft-Windows-Setup" processorArchitecture="amd64"
+               publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS"
+               xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State"
+               xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+      <UserData>
+        <!-- Clave generica de Windows 11 Pro. NO activa nada: solo evita la pantalla
+             de product key y fija la edicion. Activas con tu licencia real despues. -->
+        <ProductKey>
+          <Key>VK7JG-NPHTM-C97JM-9MPGT-3V66T</Key>
+          <WillShowUI>OnError</WillShowUI>
+        </ProductKey>
+        <AcceptEula>true</AcceptEula>
+      </UserData>
+      <!-- A PROPOSITO no hay DiskConfiguration: el disco lo elegis a mano. -->
+    </component>
+
+  </settings>
+
+  <!-- =====================================================================
+       PASS 2: specialize. Corre tras aplicar la imagen, antes del OOBE.
+
+       OJO CON EL COMPONENTE: RunSynchronous va en Microsoft-Windows-Deployment,
+       NO en Microsoft-Windows-Shell-Setup. Ponerlo en Shell-Setup aborta TODA la
+       instalacion con "The computer restarted unexpectedly". Log real:
+
+         [setup.exe] SMI data results dump: Source = Name: Microsoft-Windows-Shell-Setup,
+                     ... /settings/RunSynchronous
+         [setup.exe] SMI data results dump: Description = Setting is not defined in this component.
+         The provided unattend file is not valid; hrResult = 0x80220001
+         Windows could not parse or process unattend answer file for pass [specialize].
+
+       Este error vivio latente en el archivo original: como al unattend le faltaba
+       el pass windowsPE, se descartaba entero y nunca se llegaba a ejecutar. Al
+       arreglar aquello, esto salio a la luz.
+       ===================================================================== -->
+  <settings pass="specialize">
+    <component name="Microsoft-Windows-Deployment" processorArchitecture="amd64"
+               publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS"
+               xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State"
+               xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
       <RunSynchronous>
+        <!-- Region = Argentina (GeoID 11).
+
+             Se probo poner aca GeoID 68 (Irlanda, EEA) para que EdgeUpdate respetara
+             las policies de Edge, y NO funciono: el <UserLocale>es-AR</UserLocale> del
+             pass oobeSystem pisa el GeoID antes de que EdgeUpdate corra durante el OOBE.
+             Medido: la fase 7 escribia 68 en Users\Default\NTUSER.DAT y terminaba en 11.
+             Edge se frena matando EdgeUpdate en la fase 7, no jugando con la region.
+             Ver D19 y D20 en docs\decisiones.md.
+
+             BypassNRO tampoco esta aca: es redundante con el bloque UserAccounts del
+             pass oobeSystem, que es el que realmente crea la cuenta local. -->
         <RunSynchronousCommand wcm:action="add">
           <Order>1</Order>
-          <Path>reg add "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\OOBE" /v BypassNRO /t REG_DWORD /d 1 /f</Path>
+          <Description>Region Argentina</Description>
+          <Path>reg add "HKU\.DEFAULT\Control Panel\International\Geo" /v Nation /t REG_SZ /d 11 /f</Path>
         </RunSynchronousCommand>
       </RunSynchronous>
     </component>
   </settings>
 
+  <!-- =====================================================================
+       PASS 3: oobeSystem. La experiencia de primer arranque.
+       ===================================================================== -->
   <settings pass="oobeSystem">
+
     <component name="Microsoft-Windows-International-Core" processorArchitecture="amd64"
                publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS"
                xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State"
@@ -43,10 +140,29 @@
         <HideEULAPage>true</HideEULAPage>
         <HideOEMRegistrationScreen>true</HideOEMRegistrationScreen>
         <HideOnlineAccountScreens>true</HideOnlineAccountScreens>
+        <HideLocalAccountScreen>true</HideLocalAccountScreen>
         <HideWirelessSetupInOOBE>true</HideWirelessSetupInOOBE>
         <ProtectYourPC>3</ProtectYourPC>
       </OOBE>
+      <!-- Cuenta local creada por el unattend: el OOBE nunca llega a pedir cuenta
+           Microsoft. Password VACIO a proposito (no se hardcodea nada secreto en la
+           ISO); le ponés una desde Settings en el primer arranque si querés.
+           Para cambiar el usuario, editá Name y DisplayName. -->
+      <UserAccounts>
+        <LocalAccounts>
+          <LocalAccount wcm:action="add">
+            <Name>pato</Name>
+            <DisplayName>pato</DisplayName>
+            <Group>Administrators</Group>
+            <Password>
+              <Value></Value>
+              <PlainText>true</PlainText>
+            </Password>
+          </LocalAccount>
+        </LocalAccounts>
+      </UserAccounts>
     </component>
+
   </settings>
 
 </unattend>
