@@ -33,7 +33,12 @@ if (-not (Test-Path (Join-Path $mount 'Windows'))) {
   Write-Host "ERROR: no hay imagen montada en $mount" -ForegroundColor Red; exit 1
 }
 
-if (-not $Global:AppsPicked) {
+# OJO: la comparacion es contra $null, NO `-not $AppsPicked`.
+# En PowerShell un array VACIO es "falsy", asi que `-not @()` da $true y no se puede
+# distinguir "el usuario NO eligio ningun programa" de "no hay perfil cargado".
+# Paso de verdad: el perfil pedia 0 programas y esta fase generaba los 24
+# recomendados igual. Elegir cero era indistinguible de no elegir.
+if ($null -eq $Global:AppsPicked) {
   $Global:AppsPicked = @($AppCatalog | Where-Object { $_.Rec } | ForEach-Object { $_.Key })
   Write-Host "  (sin perfil: uso los recomendados)" -ForegroundColor DarkGray
 }

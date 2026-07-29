@@ -103,34 +103,48 @@ $Global:PersonalizacionCatalog = @(
   # ---------------------------------------------------------------- COLOR DE ACENTO
   # OJO CON ESTO: el color de acento de Windows 11 no es un solo valor. La UI usa
   # tambien AccentPalette, un blob BINARIO de 32 bytes con 8 tonos derivados. Escribir
-  # solo AccentColor deja partes de la UI con el color viejo.
-  # Por eso aca se ofrecen paletas PRECALCULADAS (blob incluido) en vez de un color
-  # libre: preferimos 4 opciones que se ven bien a un selector que deja la UI a medias.
+  # solo AccentColor deja partes de la UI con el color viejo. Por eso la fase 10
+  # calcula el AccentPalette y lo escribe en el primer login.
   # El usuario igual puede elegir CUALQUIER color despues, desde Settings.
+  #
+  # ###################################################################
+  #  EL SUFIJO 'L' DE LOS VALORES NO ES DECORATIVO. NO LO SAQUES.
+  #
+  #  PowerShell parsea un literal hexadecimal de 8 digitos como Int32 CON SIGNO:
+  #      0xFF14B8A6         ->  -15419226   (Int32, NEGATIVO)
+  #      0xFF14B8A6L        ->  4279548070  (Int64, correcto)
+  #  Estos colores son ARGB con alpha FF, asi que el bit alto siempre esta prendido
+  #  y SIEMPRE caen en negativo sin la L. Con un negativo, el `reg add /t REG_DWORD`
+  #  escribe basura o falla, y `[uint32]` de un negativo tira excepcion.
+  #  Sintoma real: los tres valores del acento fallaban EN SILENCIO y Windows se
+  #  quedaba con su azul por defecto.
+  #  El self-test de LunaticOS.ps1 verifica que todos los DWORD entren en uint32:
+  #  si alguien saca una L, falla ahi antes de llegar a una ISO.
+  # ###################################################################
   @{ Key='acento-violeta'; Name='Color de acento: violeta'; Rec=$false
      Note='Paleta completa (AccentPalette incluido). Podes cambiarlo despues en Settings > Colors.'
      Regs=@(
-       @{k='Software\Microsoft\Windows\CurrentVersion\Explorer\Accent'; v='AccentColorMenu'; d=0xFF8B5CF6; t='dword'}
-       @{k='Software\Microsoft\Windows\DWM';                            v='AccentColor';     d=0xFF8B5CF6; t='dword'}
-       @{k='Software\Microsoft\Windows\DWM';                            v='ColorizationColor'; d=0xC48B5CF6; t='dword'}
+       @{k='Software\Microsoft\Windows\CurrentVersion\Explorer\Accent'; v='AccentColorMenu'; d=0xFF8B5CF6L; t='dword'}
+       @{k='Software\Microsoft\Windows\DWM';                            v='AccentColor';     d=0xFF8B5CF6L; t='dword'}
+       @{k='Software\Microsoft\Windows\DWM';                            v='ColorizationColor'; d=0xC48B5CF6L; t='dword'}
        @{k='Software\Microsoft\Windows\DWM';                            v='ColorPrevalence'; d=0; t='dword'}
      ) }
 
   @{ Key='acento-teal'; Name='Color de acento: teal'; Rec=$false
      Note='Paleta completa. Excluyente con las otras opciones de acento.'
      Regs=@(
-       @{k='Software\Microsoft\Windows\CurrentVersion\Explorer\Accent'; v='AccentColorMenu'; d=0xFF14B8A6; t='dword'}
-       @{k='Software\Microsoft\Windows\DWM';                            v='AccentColor';     d=0xFF14B8A6; t='dword'}
-       @{k='Software\Microsoft\Windows\DWM';                            v='ColorizationColor'; d=0xC414B8A6; t='dword'}
+       @{k='Software\Microsoft\Windows\CurrentVersion\Explorer\Accent'; v='AccentColorMenu'; d=0xFF14B8A6L; t='dword'}
+       @{k='Software\Microsoft\Windows\DWM';                            v='AccentColor';     d=0xFF14B8A6L; t='dword'}
+       @{k='Software\Microsoft\Windows\DWM';                            v='ColorizationColor'; d=0xC414B8A6L; t='dword'}
        @{k='Software\Microsoft\Windows\DWM';                            v='ColorPrevalence'; d=0; t='dword'}
      ) }
 
   @{ Key='acento-ambar'; Name='Color de acento: ambar'; Rec=$false
      Note='Paleta completa. Excluyente con las otras opciones de acento.'
      Regs=@(
-       @{k='Software\Microsoft\Windows\CurrentVersion\Explorer\Accent'; v='AccentColorMenu'; d=0xFFF59E0B; t='dword'}
-       @{k='Software\Microsoft\Windows\DWM';                            v='AccentColor';     d=0xFFF59E0B; t='dword'}
-       @{k='Software\Microsoft\Windows\DWM';                            v='ColorizationColor'; d=0xC4F59E0B; t='dword'}
+       @{k='Software\Microsoft\Windows\CurrentVersion\Explorer\Accent'; v='AccentColorMenu'; d=0xFFF59E0BL; t='dword'}
+       @{k='Software\Microsoft\Windows\DWM';                            v='AccentColor';     d=0xFFF59E0BL; t='dword'}
+       @{k='Software\Microsoft\Windows\DWM';                            v='ColorizationColor'; d=0xC4F59E0BL; t='dword'}
        @{k='Software\Microsoft\Windows\DWM';                            v='ColorPrevalence'; d=0; t='dword'}
      ) }
 

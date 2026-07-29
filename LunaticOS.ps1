@@ -28,7 +28,8 @@ param(
   [string]$ProfilePath = "$PSScriptRoot\perfil.json",
   [switch]$NoPreflight,
   [switch]$Apply,         # saltea la TUI: aplica el perfil.json que ya existe
-  [switch]$SelfTest       # valida catalogos y perfil sin abrir la TUI ni buildear
+  [switch]$SelfTest,      # valida catalogos y perfil sin abrir la TUI ni buildear
+  [switch]$NoPause        # no esperar teclas: para correr desatendido (CI, background)
 )
 
 $ErrorActionPreference = 'Stop'
@@ -288,7 +289,7 @@ function Invoke-Preflight {
     return $false
   }
   Write-Host '  Todo en orden.' -ForegroundColor Green
-  Show-TuiPause
+  if (-not $NoPause) { Show-TuiPause }
   $true
 }
 
@@ -593,6 +594,42 @@ function Invoke-SelfTest {
   Test-RefProbe $probe
   Chk 'un [ordered] se modifica por referencia' ($probe['x'] -eq $true)
 
+  # ==========================================================================
+  #  REGRESION: "elegir cero" tiene que ser distinto de "no hay perfil".
+  #  Un array vacio es FALSY en PowerShell, asi que `if (-not $AppsPicked)` toma
+  #  como "sin perfil" el caso en que el usuario desmarco TODO -- y le aplica los
+  #  recomendados que acababa de rechazar. Paso de verdad: el perfil pedia 0
+  #  programas y la fase 11 genero los 24 recomendados igual.
+  # ==========================================================================
+  $malFallback = @()
+  foreach ($f in @('10-personalizar.ps1', '11-apps.ps1')) {
+    $c = Get-Content (Join-Path $root "scripts\$f") -Raw -ErrorAction SilentlyContinue
+    if ($c -and $c -match 'if\s*\(\s*-not\s+\$Global:(PersonalizacionPicked|AppsPicked)\s*\)') { $malFallback += $f }
+  }
+  Chk 'el fallback compara contra $null, no con -not (array vacio es falsy)' `
+      ($malFallback.Count -eq 0) ("-> " + ($malFallback -join ', '))
+
+  # ==========================================================================
+  #  REGRESION: los colores de acento son ARGB y NO ENTRAN en Int32.
+  #  0xFF14B8A6 = 4.279.415.974 y el maximo de Int32 es 2.147.483.647, asi que
+  #  un [int] tira overflow y el valor no se escribe. Fallaba en silencio.
+  # ==========================================================================
+  $overflow = @()
+  foreach ($it in $PersonalizacionCatalog) {
+    foreach ($r in $it.Regs) {
+      if ($r.t -eq 'sz') { continue }
+      try { [void][uint32]$r.d } catch { $overflow += "$($it.Key)/$($r.v)" }
+      if ([double]$r.d -gt 2147483647) {
+        # Tiene que poder convertirse a uint32 sin perder nada: si el codigo usara
+        # [int] aca, reventaria. El test verifica que el VALOR sea representable.
+        try { [void][uint32]$r.d } catch { $overflow += "$($it.Key)/$($r.v) no entra en uint32" }
+      }
+    }
+  }
+  Chk 'todos los valores DWORD entran en uint32' ($overflow.Count -eq 0) ("-> " + ($overflow -join ', '))
+  $usaInt = (Get-Content (Join-Path $root 'scripts\10-personalizar.ps1') -Raw) -match '\[string\]\[int\]\$r\.d'
+  Chk 'la fase 10 convierte DWORD con [uint32] y no con [int]' (-not $usaInt)
+
   # --- Perfil: ida y vuelta por JSON ---
   $p = New-DefaultProfile
   Chk 'perfil default se genera' ($null -ne $p)
@@ -690,10 +727,10 @@ switch ($action) {
       Write-Host '  en work\mount: podes corregir y correr la fase que fallo a mano,' -ForegroundColor Yellow
       Write-Host '  sin volver a exportar el WIM (que son 20 minutos).' -ForegroundColor Yellow
     }
-    # SIEMPRE pausar. Si el usuario lanzo con doble clic, sin esto la ventana se
-    # cierra y se lleva el resultado -- salio bien? fallo? nunca lo sabe.
+    # Pausar SALVO que se pida -NoPause. Con doble clic, sin la pausa la ventana se
+    # cierra y se lleva el resultado -- salio bien? fallo? el usuario nunca lo sabe.
     Write-Host ''
-    Show-TuiPause 'Enter para cerrar.'
+    if (-not $NoPause) { Show-TuiPause 'Enter para cerrar.' }
     if (-not $ok) { exit 1 }
   }
 }

@@ -33,7 +33,10 @@ if (-not (Test-Path (Join-Path $mount 'Windows'))) {
 }
 
 # Sin TUI: caer en los recomendados. Asi la fase sirve suelta, igual que las otras.
-if (-not $Global:PersonalizacionPicked) {
+# La comparacion es contra $null y NO `-not $...`: un array vacio es "falsy" en
+# PowerShell, asi que "el usuario no marco nada" seria indistinguible de "no hay
+# perfil" y le aplicariamos los recomendados a alguien que los rechazo.
+if ($null -eq $Global:PersonalizacionPicked) {
   $Global:PersonalizacionPicked = @($PersonalizacionCatalog | Where-Object { $_.Rec } | ForEach-Object { $_.Key })
   Write-Host "  (sin perfil: aplico los recomendados)" -ForegroundColor DarkGray
 }
@@ -71,7 +74,11 @@ function Write-Regs($root, $items) {
         continue
       }
       $type = if ($r.t -eq 'sz') { 'REG_SZ' } else { 'REG_DWORD' }
-      $data = if ($r.t -eq 'sz') { "$($r.d)" } else { [string][int]$r.d }
+      # [uint32] y NO [int]. Los colores de acento son ARGB con alpha FF, o sea
+      # valores como 0xFF14B8A6 = 4.279.415.974, que NO ENTRA en Int32 (max
+      # 2.147.483.647): [int] tira overflow y los tres valores del acento fallaban
+      # en silencio. Se vio recien cuando el log empezo a capturar las fases.
+      $data = if ($r.t -eq 'sz') { "$($r.d)" } else { [string][uint32]$r.d }
       $out = & reg.exe add $key /v $r.v /t $type /d $data /f 2>&1
       if ($LASTEXITCODE -eq 0) { $ok++ } else { $fail += "$key\$($r.v)"; }
     }
