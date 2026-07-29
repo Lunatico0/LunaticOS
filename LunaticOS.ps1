@@ -554,6 +554,26 @@ function Invoke-SelfTest {
     }
   }
 
+  # ==========================================================================
+  #  REGRESION: la checklist tiene que modificar el perfil POR REFERENCIA.
+  #
+  #  Este test existe por un bug real que llego al usuario: $Selected estaba
+  #  declarado [hashtable] y el perfil es [ordered]@{}. PowerShell convertia el
+  #  tipo, la conversion CREABA UNA COPIA, y todo lo que el usuario marcaba se
+  #  perdia al volver al menu -- el perfil se guardaba con los valores de fabrica
+  #  y la ISO salia con la config default. Sin sintomas, sin error, sin log.
+  # ==========================================================================
+  $tipoSel = (Get-Command Show-TuiChecklist).Parameters['Selected'].ParameterType
+  Chk 'Show-TuiChecklist recibe $Selected SIN tipar (por referencia)' `
+      ($tipoSel -eq [object]) "-> esta tipado como [$($tipoSel.Name)]: los cambios del usuario se van a PERDER"
+
+  # Y la prueba funcional: un [ordered] modificado dentro de una funcion con la
+  # misma firma tiene que verse cambiado afuera.
+  $probe = [ordered]@{ x = $false }
+  function Test-RefProbe($s) { $s['x'] = $true }
+  Test-RefProbe $probe
+  Chk 'un [ordered] se modifica por referencia' ($probe['x'] -eq $true)
+
   # --- Perfil: ida y vuelta por JSON ---
   $p = New-DefaultProfile
   Chk 'perfil default se genera' ($null -ne $p)

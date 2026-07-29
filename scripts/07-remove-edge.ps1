@@ -166,7 +166,36 @@ Use-OfflineHive -HivePath (Join-Path $mount 'Windows\System32\config\SOFTWARE') 
 }
 
 # --------------------------------------------------------------------------
-# 2) Accesos directos que ya vienen en la imagen
+# 2) BORRAR los arboles del navegador de la imagen
+# --------------------------------------------------------------------------
+# Esto NO reemplaza al IFEO: lo COMPLEMENTA, y hace falta por un motivo concreto.
+#
+# El layout por defecto del menu Inicio de Windows 11 trae Edge PINNEADO. Ese pin
+# no es un .lnk -- vive dentro de start2.bin, un blob binario que decidimos no
+# tocar (romperlo es peor que el problema). Pero el pin solo se MATERIALIZA si el
+# ejecutable existe en la imagen: si Edge no esta, el icono no aparece.
+#
+# Medido a la mala: una ISO armada sobre un WIM donde Edge seguia presente salio
+# con Edge pinneado en el Inicio. El IFEO impedia abrirlo, pero el icono estaba
+# ahi y el usuario -con razon- lo leyo como "no funciono".
+#
+# Entonces:
+#   borrar  -> el pin y los accesos directos no existen en la instalacion inicial
+#   IFEO    -> cuando Windows Update lo reinstale junto con WebView2, no ejecuta
+# Los tres arboles son HARDLINKS al mismo contenido: borrar Edge y EdgeCore deja
+# EdgeWebView (WebView2) intacto, que es justo lo que queremos conservar.
+$pfx86kill = Join-Path $mount 'Program Files (x86)\Microsoft'
+foreach ($d in @((Join-Path $pfx86kill 'Edge'), (Join-Path $pfx86kill 'EdgeCore'))) {
+  if (-not (Test-Path $d)) { Write-Step "(no existe) $(Split-Path $d -Leaf)" 'DarkGray'; continue }
+  $mb = [math]::Round(((Get-ChildItem $d -Recurse -Force -File -EA SilentlyContinue |
+                        Measure-Object Length -Sum).Sum) / 1MB, 1)
+  if ($DryRun)                    { Write-Step "[dry] borraria $d ($mb MB)" 'DarkGray' }
+  elseif (Remove-ProtectedDir $d) { Write-Step "borrado de la imagen: $(Split-Path $d -Leaf) ($mb MB)" 'Green' }
+  else                            { Write-Step "NO pude borrar: $d" 'Red' }
+}
+
+# --------------------------------------------------------------------------
+# 3) Accesos directos que ya vienen en la imagen
 # --------------------------------------------------------------------------
 $lnks = @(
   (Join-Path $mount 'ProgramData\Microsoft\Windows\Start Menu\Programs\Microsoft Edge.lnk')

@@ -71,7 +71,26 @@ function Show-TuiChecklist {
   param(
     [Parameter(Mandatory)][string]$Title,
     [Parameter(Mandatory)][array]$Items,
-    [Parameter(Mandatory)][hashtable]$Selected,
+    # ==========================================================================
+    #  $Selected NO LLEVA TIPO. NO LE PONGAS [hashtable]. NUNCA.
+    #
+    #  El perfil usa [ordered]@{} (OrderedDictionary) para conservar el orden de
+    #  las claves en el JSON. Si este parametro se declara [hashtable], PowerShell
+    #  CONVIERTE el OrderedDictionary a Hashtable, y al convertir CREA UNA COPIA:
+    #  esta funcion modifica la copia, el original queda intacto y TODO lo que el
+    #  usuario marco se pierde al volver al menu. El perfil se guarda con los
+    #  valores de fabrica y nadie entiende por que.
+    #
+    #  Medido:
+    #     [ordered] -> parametro [hashtable]  = POR COPIA   (cambios perdidos)
+    #     [ordered] -> parametro sin tipo     = POR REFERENCIA (correcto)
+    #  Y de paso la conversion tambien PIERDE EL ORDEN de las claves.
+    #
+    #  Sin anotacion de tipo, el objeto pasa por referencia y funciona.
+    #  El self-test de LunaticOS.ps1 verifica esto: si alguien vuelve a tipar el
+    #  parametro, falla ahi antes de llegar al usuario.
+    # ==========================================================================
+    [Parameter(Mandatory)]$Selected,
     [array]$Exclusive = @(),
     [string]$Legend = 'marcado = se aplica'
   )
