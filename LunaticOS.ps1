@@ -422,11 +422,23 @@ function Invoke-Pipeline {
   # ==========================================================================
   $logDir = Join-Path $root 'work\logs'
   New-Item -ItemType Directory -Force -Path $logDir | Out-Null
-  $log = Join-Path $logDir ("build-{0}.log" -f (Get-Date -Format 'yyyyMMdd-HHmmss'))
-  function LogLine($t, $color = 'Gray') {
-    Write-Host $t -ForegroundColor $color
-    Add-Content -Path $log -Value $t -Encoding UTF8
-  }
+  $stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
+  $log   = Join-Path $logDir "build-$stamp.log"
+
+  # --------------------------------------------------------------------------
+  #  Start-Transcript y no un pipe, por dos razones concretas:
+  #
+  #  1) Las fases escriben con Write-Host, que va DIRECTO A LA CONSOLA y NO al
+  #     pipeline. Un `& fase.ps1 | ForEach-Object { ... }` captura solo la salida
+  #     de comandos nativos (dism, oscdimg) y se pierde justo lo que importa:
+  #     "removido: X", "bloqueado: msedge.exe", "servicio protegido", etc.
+  #     Con eso el log quedaba lleno de barras de progreso y sin informacion util.
+  #  2) Transcript captura TODO el host, incluido lo que escriben las fases.
+  # --------------------------------------------------------------------------
+  try { Start-Transcript -Path $log -Force | Out-Null; $script:transcriptOn = $true }
+  catch { $script:transcriptOn = $false; Write-Host "  ! no pude iniciar el log: $($_.Exception.Message)" -ForegroundColor Yellow }
+
+  function LogLine($t, $color = 'Gray') { Write-Host $t -ForegroundColor $color }
 
   # ==========================================================================
   #  Y ACA VA EL OTRO ARREGLO: 'Continue', no 'Stop'.
@@ -455,11 +467,14 @@ function Invoke-Pipeline {
       LogLine ("  [{0}/{1}] {2} -- {3}" -f $i, $fases.Count, $f.n, $f.d) 'Cyan'
       $global:LASTEXITCODE = 0
       try {
-        & $path 2>&1 | ForEach-Object {
+        # Las barras de progreso de dism/oscdimg son miles de lineas que tapan todo
+        # lo demas en el log. Se filtran: no aportan nada despues del build.
+        & $path 2>&1 | Where-Object {
           $s = "$_"
-          Write-Host $s
-          Add-Content -Path $log -Value $s -Encoding UTF8
-        }
+          -not ($s -match '^\s*\[[=\s]*\d+\.?\d*%[=\s]*\]\s*$' -or
+                $s -match '^\s*\d+%\s+complete\s*$' -or
+                $s -match 'RemoteException')
+        } | ForEach-Object { Write-Host "$_" }
       } catch {
         LogLine ''
         LogLine "  ================ FALLO EN $($f.n) ================" 'Red'
@@ -483,7 +498,11 @@ function Invoke-Pipeline {
     LogLine ("  Pipeline completo en {0:hh\:mm\:ss}" -f ((Get-Date) - $inicio)) 'Green'
     $true
   }
-  finally { $ErrorActionPreference = $prevEAP }
+  finally {
+    $ErrorActionPreference = $prevEAP
+    if ($script:transcriptOn) { try { Stop-Transcript | Out-Null } catch { } }
+    $script:buildLog = $log
+  }
 }
 
 # ===========================================================================
