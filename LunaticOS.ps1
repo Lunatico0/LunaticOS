@@ -1,0 +1,576 @@
+#requires -Version 5.1
+<#
+  LunaticOS.ps1 — Entry point unico. Elegis que querer, y genera tu ISO.
+
+  Uso (consola como ADMINISTRADOR):
+      .\LunaticOS.ps1
+
+  Que hace, en orden:
+      1. Preflight   -> admin, Windows, espacio en disco, ADK (lo instala si falta), ISO
+      2. TUI         -> elegis appx / servicios / features / personalizacion / programas
+      3. perfil.json -> guarda tu seleccion (compartible y versionable)
+      4. Pipeline    -> corre las fases 00..10
+      5. ISO lista   -> la grabas con Ventoy o Rufus
+
+  ===========================================================================
+  POR QUE UN perfil.json Y NO EDITAR config.ps1
+
+  El perfil se puede COMPARTIR: le pasas el JSON a un compa y genera la MISMA
+  ISO que vos, sin volver a elegir 200 cosas. Y es reproducible: lo versionas en
+  git y en 6 meses regeneras la ISO identica.
+
+  config.ps1 sigue siendo el DEFAULT del proyecto. El perfil lo pisa en memoria
+  justo antes de correr las fases, asi las fases no saben que existe la TUI y se
+  siguen pudiendo correr a mano una por una.
+  ===========================================================================
+#>
+param(
+  [string]$ProfilePath = "$PSScriptRoot\perfil.json",
+  [switch]$NoPreflight,
+  [switch]$Apply,         # saltea la TUI: aplica el perfil.json que ya existe
+  [switch]$SelfTest       # valida catalogos y perfil sin abrir la TUI ni buildear
+)
+
+$ErrorActionPreference = 'Stop'
+$root = $PSScriptRoot
+
+. "$root\scripts\tui.ps1"
+. "$root\scripts\config.ps1"
+. "$root\config\apps.ps1"
+. "$root\config\personalizacion.ps1"
+
+# ===========================================================================
+#  CATALOGOS PARA LA TUI
+# ===========================================================================
+
+# Notas de los appx. Salen del inventario real de la imagen (docs/inventario-appx.md),
+# no de una guia de foro: 47 paquetes provisioned en el install.wim de 25H2 Pro.
+$AppxNotes = @{
+  'Clipchamp.Clipchamp'                     = 'Editor de video de Microsoft.'
+  'Microsoft.BingNews'                      = 'Noticias de Bing.'
+  'Microsoft.BingWeather'                   = 'Clima de Bing. OJO: el clima de la taskbar es Widgets, no esto.'
+  'Microsoft.GetHelp'                       = 'Asistente de ayuda de Microsoft.'
+  'Microsoft.MicrosoftOfficeHub'            = 'Hub de Office: basicamente publicidad de Microsoft 365.'
+  'Microsoft.MicrosoftSolitaireCollection'  = 'Solitario, con anuncios.'
+  'Microsoft.OutlookForWindows'             = 'Outlook "nuevo". Reincidente: vuelve en los feature updates.'
+  'Microsoft.PowerAutomateDesktop'          = 'Automatizacion RPA. Pesado y casi nadie lo usa.'
+  'Microsoft.Todos'                         = 'Microsoft To-Do.'
+  'Microsoft.Windows.DevHome'               = 'Dev Home. Reincidente en updates y no aporta nada que no tengas.'
+  'Microsoft.WindowsFeedbackHub'            = 'Feedback Hub: manda telemetria a Microsoft.'
+  'MicrosoftCorporationII.QuickAssist'      = 'Asistencia remota de Microsoft.'
+  'MicrosoftWindows.CrossDevice'            = 'Continuidad con el celular.'
+  'Microsoft.WindowsAlarms'                 = 'Alarmas y reloj.'
+  'Microsoft.MicrosoftStickyNotes'          = 'Notas adhesivas.'
+  'Microsoft.WindowsSoundRecorder'          = 'Grabadora de voz.'
+  'Microsoft.YourPhone'                     = 'Phone Link (vincular Android).'
+  'MSTeams'                                 = 'Teams preinstalado. Si lo usas para laburo, instala el de winget aparte.'
+  # --- Zona gris: leer antes de sacar ---
+  'Microsoft.BingSearch'                    = 'ZONA GRIS: DEJALO. Sacarlo puede romper el buscador del menu Inicio. El ruido de Bing se apaga por tweak (BingSearchEnabled=0), sin riesgo.'
+  'Microsoft.ZuneMusic'                     = 'ZONA GRIS: DEJALO. Es el reproductor de archivos locales. Sin el no abris un mp3/mp4 del disco. Spotify NO lo reemplaza.'
+  'Microsoft.WindowsCamera'                 = 'ZONA GRIS: DEJALO. Es liviano y lo necesitas si algun dia conectas una webcam.'
+  # --- Blindados ---
+  'Microsoft.DesktopAppInstaller'           = 'BLINDADO: es WINGET. Sacarlo rompe la instalacion de programas.'
+  'Microsoft.WindowsStore'                  = 'BLINDADO: Microsoft Store.'
+  'Microsoft.StorePurchaseApp'              = 'BLINDADO: compras de la Store.'
+  'Microsoft.SecHealthUI'                   = 'BLINDADO: interfaz de Windows Security.'
+  'Microsoft.ApplicationCompatibilityEnhancements' = 'BLINDADO: parches de compatibilidad de apps.'
+  'Microsoft.WindowsTerminal'               = 'BLINDADO: Terminal.'
+  'Microsoft.WindowsNotepad'                = 'BLINDADO: Notepad.'
+  'Microsoft.WindowsCalculator'             = 'BLINDADO: Calculadora.'
+  'Microsoft.Paint'                         = 'BLINDADO: Paint.'
+  'Microsoft.ScreenSketch'                  = 'BLINDADO: Recortes (Win+Shift+S).'
+  'Microsoft.Windows.Photos'                = 'BLINDADO: visor de fotos.'
+  'Microsoft.GamingApp'                     = 'BLINDADO: Xbox app (Game Pass).'
+  'Microsoft.Xbox.TCUI'                     = 'BLINDADO: UI de Xbox Live. La usan varios juegos de Steam.'
+  'Microsoft.XboxGamingOverlay'             = 'BLINDADO: Game Bar (Win+G). La barra de captura y FPS.'
+  'Microsoft.XboxIdentityProvider'          = 'BLINDADO: login de Xbox. Sin esto varios juegos NO arrancan.'
+  'Microsoft.XboxSpeechToTextOverlay'       = 'BLINDADO: subtitulos de Xbox.'
+  'MicrosoftWindows.Client.WebExperience'   = 'BLINDADO por decision: es WIDGETS, o sea el CLIMA de la taskbar. En 25H2 el feed de MSN viene apagado, asi que tenes clima sin publicidad.'
+  'Microsoft.AV1VideoExtension'             = 'BLINDADO: codec AV1. Sacarlo rompe reproduccion de video.'
+  'Microsoft.AVCEncoderVideoExtension'      = 'BLINDADO: codec AVC.'
+  'Microsoft.HEIFImageExtension'            = 'BLINDADO: imagenes HEIF (fotos de iPhone).'
+  'Microsoft.HEVCVideoExtension'            = 'BLINDADO: codec HEVC/H.265.'
+  'Microsoft.MPEG2VideoExtension'           = 'BLINDADO: codec MPEG2.'
+  'Microsoft.RawImageExtension'             = 'BLINDADO: fotos RAW.'
+  'Microsoft.VP9VideoExtensions'            = 'BLINDADO: codec VP9 (YouTube).'
+  'Microsoft.WebMediaExtensions'            = 'BLINDADO: WebM/OGG.'
+  'Microsoft.WebpImageExtension'            = 'BLINDADO: imagenes WebP.'
+}
+
+function Build-AppxCatalog {
+  $cat = @()
+  foreach ($a in $AppxRemove) {
+    $cat += @{ Key = $a; Name = $a; Rec = $true;  Cat = 'bloat'
+               Note = if ($AppxNotes[$a]) { $AppxNotes[$a] } else { 'Sin nota.' } }
+  }
+  foreach ($a in @('Microsoft.BingSearch','Microsoft.ZuneMusic','Microsoft.WindowsCamera')) {
+    $cat += @{ Key = $a; Name = $a; Rec = $false; Cat = 'zona gris'; Note = $AppxNotes[$a] }
+  }
+  # Los blindados se MUESTRAN pero no se pueden marcar. Mostrarlos es didactico:
+  # asi ves que se conserva y por que, en vez de preguntarte que hizo el script.
+  foreach ($a in $AppxKeep) {
+    if ($cat.Key -contains $a) { continue }
+    $cat += @{ Key = $a; Name = $a; Rec = $false; Cat = 'BLINDADO'; Locked = $true
+               Note = if ($AppxNotes[$a]) { $AppxNotes[$a] } else { 'Protegido: sacarlo rompe algo.' } }
+  }
+  $cat
+}
+
+function Build-ServiceCatalog {
+  $cat = @()
+  foreach ($s in $ServicesDisable) {
+    $cat += @{ Key = $s; Name = $s; Rec = $true; Cat = 'apagado'
+               Note = 'Se deshabilita por defecto en el perfil de LunaticOS.' }
+  }
+  foreach ($s in $ServicesOptional.Keys | Sort-Object) {
+    $cat += @{ Key = $s; Name = $s; Rec = $false; Cat = 'opcional'; Note = $ServicesOptional[$s] }
+  }
+  $cat
+}
+
+function Build-FeatureCatalog {
+  $notes = @{
+    'App.StepsRecorder'        = 'Grabadora de pasos. Deprecada por Microsoft.'
+    'Browser.InternetExplorer' = 'IE 11. Sacalo salvo que uses "modo IE" en algun sistema viejo de laburo.'
+    'MathRecognizer'           = 'Reconocimiento de formulas escritas a mano. Necesita pantalla tactil.'
+    'Media.WindowsMediaPlayer' = 'WMP CLASICO (legacy). NO es el reproductor moderno, ese es un appx y se conserva.'
+    'Language.Handwriting'     = 'Escritura a mano. Sin pantalla tactil no sirve.'
+    'WindowsMediaPlayer'       = 'Feature del WMP legacy. NO tocar MediaPlayback, que es el motor de reproduccion.'
+    'WorkFolders-Client'       = 'Work Folders (sincronizacion corporativa).'
+  }
+  $cat = @()
+  foreach ($c in $CapabilitiesRemove) {
+    $cat += @{ Key = "cap:$c"; Name = $c; Rec = $true; Cat = 'capability'
+               Note = if ($notes[$c]) { $notes[$c] } else { 'Capability opcional de Windows.' } }
+  }
+  foreach ($f in $FeaturesDisable) {
+    $cat += @{ Key = "feat:$f"; Name = $f; Rec = $true; Cat = 'feature'
+               Note = if ($notes[$f]) { $notes[$f] } else { 'Feature opcional de Windows.' } }
+  }
+  $cat
+}
+
+function Build-FlagCatalog {
+  @(
+    @{ Key='RemoveOneDrive';    Name='Quitar OneDrive';            Rec=$true
+       Note='Saca el cliente de OneDrive de la imagen. No borra archivos en la nube.' }
+    @{ Key='KillTelemetry';     Name='Cortar telemetria';          Rec=$true
+       Note='Servicio DiagTrack + tareas programadas + policy. NUNCA por firewall ni hosts: eso rompe Windows Update.' }
+    @{ Key='DisableCopilot';    Name='Desactivar Copilot';         Rec=$true
+       Note='Policy TurnOffWindowsCopilot. Esta SI es policy: no querras que vuelva en un update.' }
+    @{ Key='DisableRecall';     Name='Desactivar Recall';          Rec=$true
+       Note='Recall saca capturas de tu pantalla continuamente. Policy, por el mismo motivo.' }
+    @{ Key='BypassMsAccount';   Name='Cuenta local (sin cuenta Microsoft)'; Rec=$true
+       Note='Crea el usuario por unattend: el OOBE nunca llega a pedir cuenta Microsoft.' }
+    @{ Key='ShowWeatherWidget'; Name='Conservar Widgets (clima en la taskbar)'; Rec=$true
+       Note='Deja el clima. En 25H2 el feed de noticias MSN viene apagado, asi que no trae publicidad.' }
+    @{ Key='RemoveEdgeBrowser'; Name='Bloquear el navegador Edge'; Rec=$true
+       Note='Edge queda invisible e inejecutable (IFEO), pero WebView2 sigue actualizandose solo. NECESITAS instalar otro navegador y ponerlo como predeterminado.' }
+    @{ Key='DisableLocation';   Name='Desactivar ubicacion (policy)'; Rec=$false
+       Note='CUIDADO: esto BLOQUEA el panel Privacidad > Ubicacion en gris y no lo podes reactivar desde Settings. Ademas choca con el clima de Widgets. Por eso viene desmarcado.' }
+  )
+}
+
+# ===========================================================================
+#  PERFIL (json)
+# ===========================================================================
+function New-DefaultProfile {
+  $p = [ordered]@{
+    version         = 1
+    creado          = ''
+    appx            = [ordered]@{}
+    servicios       = [ordered]@{}
+    features        = [ordered]@{}
+    flags           = [ordered]@{}
+    personalizacion = [ordered]@{}
+    programas       = [ordered]@{}
+    usuario         = [ordered]@{ nombre = 'pato'; zona = 'Argentina Standard Time'; teclado = 'es-AR;en-US' }
+  }
+  foreach ($i in Build-AppxCatalog)    { if (-not $i.Locked) { $p.appx[$i.Key] = [bool]$i.Rec } }
+  foreach ($i in Build-ServiceCatalog) { $p.servicios[$i.Key] = [bool]$i.Rec }
+  foreach ($i in Build-FeatureCatalog) { $p.features[$i.Key]  = [bool]$i.Rec }
+  foreach ($i in Build-FlagCatalog)    { $p.flags[$i.Key]     = [bool]$i.Rec }
+  foreach ($i in $PersonalizacionCatalog) { $p.personalizacion[$i.Key] = [bool]$i.Rec }
+  foreach ($i in $AppCatalog)          { $p.programas[$i.Key] = [bool]$i.Rec }
+  $p
+}
+
+function Import-Profile([string]$path) {
+  if (-not (Test-Path $path)) { return $null }
+  try {
+    $raw = Get-Content $path -Raw | ConvertFrom-Json
+  } catch {
+    Write-Host "  ! perfil.json ilegible ($($_.Exception.Message)). Se ignora." -ForegroundColor Yellow
+    return $null
+  }
+  # Se arranca del default y se PISAN las claves que el archivo trae. Asi un perfil
+  # viejo (de antes de agregar opciones nuevas) sigue funcionando: las claves que
+  # falten quedan con el default en vez de romper o quedar en $null.
+  $p = New-DefaultProfile
+  foreach ($sec in @('appx','servicios','features','flags','personalizacion','programas')) {
+    if ($raw.$sec) {
+      foreach ($k in $raw.$sec.PSObject.Properties.Name) { $p.$sec[$k] = [bool]$raw.$sec.$k }
+    }
+  }
+  if ($raw.usuario) {
+    foreach ($k in $raw.usuario.PSObject.Properties.Name) { $p.usuario[$k] = $raw.usuario.$k }
+  }
+  $p
+}
+
+function Export-Profile($profile, [string]$path, [string]$stamp) {
+  $profile.creado = $stamp
+  $profile | ConvertTo-Json -Depth 6 | Set-Content -Path $path -Encoding UTF8
+}
+
+# Convierte hashtable de selecciones -> array de claves marcadas
+function Get-Picked($section) { @($section.Keys | Where-Object { $section[$_] }) }
+
+# ===========================================================================
+#  PREFLIGHT
+# ===========================================================================
+function Test-IsAdmin {
+  $id = [Security.Principal.WindowsIdentity]::GetCurrent()
+  (New-Object Security.Principal.WindowsPrincipal($id)).IsInRole(
+    [Security.Principal.WindowsBuiltInRole]::Administrator)
+}
+
+function Invoke-Preflight {
+  Clear-Host
+  Show-TuiHeader 'Chequeo de requisitos'
+  Write-Host ''
+  $fatal = @()
+
+  # --- Administrador ---
+  if (Test-IsAdmin) { Write-Host '  [OK]    consola como Administrador' -ForegroundColor Green }
+  else { Write-Host '  [FALLA] NO sos Administrador' -ForegroundColor Red; $fatal += 'Abri PowerShell como Administrador.' }
+
+  # --- Windows suficientemente nuevo ---
+  $b = [int](Get-CimInstance Win32_OperatingSystem).BuildNumber
+  if ($b -ge 22000) { Write-Host "  [OK]    Windows build $b" -ForegroundColor Green }
+  # OJO: "${b}:" y no "$b:" -- PowerShell lee "$b:" como variable con calificador de
+  # scope (estilo $env:PATH) y tira error de parseo. Hay que delimitar con ${}.
+  else { Write-Host "  [FALLA] build ${b}: se necesita Windows 10 2004+ / 11" -ForegroundColor Red; $fatal += 'Host demasiado viejo.' }
+
+  # --- Espacio en disco ---
+  # 25 GB no es capricho: el WIM exportado (~7 GB) + el arbol de la ISO (~8 GB) +
+  # el WIM montado y expandido conviven al mismo tiempo.
+  $drive = (Get-Item $root).PSDrive.Name
+  $free  = [math]::Round((Get-PSDrive $drive).Free / 1GB, 1)
+  if ($free -ge 25) { Write-Host "  [OK]    espacio libre en ${drive}: $free GB" -ForegroundColor Green }
+  else { Write-Host "  [FALLA] solo $free GB libres en ${drive}: hacen falta 25" -ForegroundColor Red; $fatal += 'Libera espacio o mueve el repo a otro disco.' }
+
+  # --- ADK (oscdimg + dism) ---
+  if ((Test-Path $CFG.Oscdimg) -and (Test-Path $CFG.Dism)) {
+    Write-Host '  [OK]    Windows ADK (Deployment Tools)' -ForegroundColor Green
+  } else {
+    Write-Host '  [FALTA] Windows ADK: hace falta oscdimg para armar la ISO' -ForegroundColor Yellow
+    Write-Host '          El ADK NO esta en winget (verificado). Se baja de Microsoft.' -ForegroundColor DarkGray
+    if (Show-TuiConfirm 'Descargar e instalar el ADK ahora? (~1 GB de descarga)' @(
+          'Se instala SOLO el componente Deployment Tools, en silencio.'
+          'Comando: adksetup.exe /quiet /features OptionId.DeploymentTools')) {
+      Install-Adk
+      if (-not ((Test-Path $CFG.Oscdimg) -and (Test-Path $CFG.Dism))) { $fatal += 'El ADK no quedo instalado.' }
+    } else { $fatal += 'Sin el ADK no se puede armar la ISO.' }
+  }
+
+  # --- ISO original ---
+  $iso = Find-SourceIso
+  if ($iso) { Write-Host "  [OK]    ISO de Windows: $(Split-Path $iso -Leaf)" -ForegroundColor Green }
+  else      { Write-Host '  [FALLA] no encontre la ISO oficial de Windows 11 en work\' -ForegroundColor Red
+              $fatal += 'Poné la ISO oficial de Windows 11 x64 en work\ (bajala de microsoft.com/software-download/windows11).' }
+
+  Write-Host ''
+  if ($fatal) {
+    Write-Host '  No se puede seguir:' -ForegroundColor Red
+    $fatal | ForEach-Object { Write-Host "    - $_" -ForegroundColor Yellow }
+    Write-Host ''
+    return $false
+  }
+  Write-Host '  Todo en orden.' -ForegroundColor Green
+  Show-TuiPause
+  $true
+}
+
+function Install-Adk {
+  $exe = Join-Path $root 'work\adksetup.exe'
+  if (-not (Test-Path $exe)) {
+    # Link permanente de Microsoft para el ADK. Si algun dia cambia, el mensaje de
+    # error tiene que ser claro en vez de dejar un archivo de 0 bytes.
+    $url = 'https://go.microsoft.com/fwlink/?linkid=2289980'
+    Write-Host "  descargando ADK desde Microsoft..." -ForegroundColor Cyan
+    New-Item -ItemType Directory -Force -Path (Split-Path $exe) | Out-Null
+    try { Invoke-WebRequest -Uri $url -OutFile $exe -UseBasicParsing }
+    catch { Write-Host "  ! fallo la descarga: $($_.Exception.Message)" -ForegroundColor Red
+            Write-Host "    Bajalo a mano y ponelo en work\adksetup.exe" -ForegroundColor Yellow; return }
+  }
+  Write-Host '  instalando Deployment Tools (silencioso, tarda unos minutos)...' -ForegroundColor Cyan
+  & $exe /quiet /features OptionId.DeploymentTools /norestart | Out-Null
+  Write-Host '  listo.' -ForegroundColor Green
+}
+
+function Find-SourceIso {
+  $work = Join-Path $root 'work'
+  if (-not (Test-Path $work)) { return $null }
+  # La ISO que GENERAMOS se llama *_debloat.iso: excluirla o nos comeriamos nuestra
+  # propia salida como entrada.
+  Get-ChildItem $work -Filter '*.iso' -EA SilentlyContinue |
+    Where-Object { $_.Name -notlike '*debloat*' } |
+    Sort-Object Length -Descending | Select-Object -First 1 -ExpandProperty FullName
+}
+
+# ===========================================================================
+#  APLICAR EL PERFIL A LAS VARIABLES GLOBALES QUE LEEN LAS FASES
+# ===========================================================================
+function Set-GlobalsFromProfile($p) {
+  $Global:AppxRemove        = @(Get-Picked $p.appx)
+  $Global:ServicesDisable   = @(Get-Picked $p.servicios)
+  $Global:CapabilitiesRemove = @(Get-Picked $p.features | Where-Object { $_ -like 'cap:*' }  | ForEach-Object { $_ -replace '^cap:'  })
+  $Global:FeaturesDisable   = @(Get-Picked $p.features | Where-Object { $_ -like 'feat:*' } | ForEach-Object { $_ -replace '^feat:' })
+  foreach ($k in $p.flags.Keys) { $Global:Flags[$k] = [bool]$p.flags[$k] }
+  $Global:PersonalizacionPicked = @(Get-Picked $p.personalizacion)
+  $Global:AppsPicked            = @(Get-Picked $p.programas)
+  $Global:UsuarioPerfil         = $p.usuario
+}
+
+# ===========================================================================
+#  MENU PRINCIPAL
+# ===========================================================================
+function Show-MainMenu($p) {
+  while ($true) {
+    $nAppx = @(Get-Picked $p.appx).Count
+    $nSvc  = @(Get-Picked $p.servicios).Count
+    $nFeat = @(Get-Picked $p.features).Count
+    $nPers = @(Get-Picked $p.personalizacion).Count
+    $nApps = @(Get-Picked $p.programas).Count
+    $nFlag = @(Get-Picked $p.flags).Count
+
+    $sel = Show-TuiMenu -Subtitle "perfil: $(Split-Path $ProfilePath -Leaf)" -Entries @(
+      @{ Key='appx';  Label='1. Apps preinstaladas a quitar';   Info="$nAppx marcadas" }
+      @{ Key='svc';   Label='2. Servicios a deshabilitar';      Info="$nSvc marcados" }
+      @{ Key='feat';  Label='3. Features y capabilities';       Info="$nFeat marcadas" }
+      @{ Key='flags'; Label='4. Opciones del sistema';          Info="$nFlag activas" }
+      @{ Key='pers';  Label='5. Personalizacion (tema, color)'; Info="$nPers marcadas" }
+      @{ Key='apps';  Label='6. Programas a instalar';          Info="$nApps marcados" }
+      @{ Key='-' }
+      @{ Key='gen';   Label='G. GENERAR LA ISO';               Info='~45-60 min'; Accent=$true }
+      @{ Key='save';  Label='S. Guardar perfil y salir';        Info='' }
+      @{ Key='-' }
+      @{ Key='quit';  Label='Q. Salir sin guardar';             Info='' }
+    )
+
+    switch ($sel) {
+      'appx' {
+        $cat = @(Build-AppxCatalog)
+        # Los blindados no entran a la lista editable: mostrarlos como marcables
+        # seria ofrecer algo que el pipeline va a ignorar igual (guarda de AppxKeep).
+        $editables = @($cat | Where-Object { -not $_.Locked })
+        $locked    = @($cat | Where-Object { $_.Locked })
+        [void](Show-TuiChecklist -Title '1. Apps preinstaladas a QUITAR de la imagen' `
+               -Items ($editables + $locked) -Selected $p.appx `
+               -Legend 'marcado = SE QUITA · los [BLINDADO] se ignoran siempre')
+        foreach ($l in $locked) { $p.appx.Remove($l.Key) }
+      }
+      'svc'   { [void](Show-TuiChecklist -Title '2. Servicios a DESHABILITAR' -Items (Build-ServiceCatalog) -Selected $p.servicios -Legend 'marcado = Start=4 (Disabled)') }
+      'feat'  { [void](Show-TuiChecklist -Title '3. Features y capabilities a QUITAR' -Items (Build-FeatureCatalog) -Selected $p.features -Legend 'marcado = se quita') }
+      'flags' { [void](Show-TuiChecklist -Title '4. Opciones del sistema' -Items (Build-FlagCatalog) -Selected $p.flags -Legend 'marcado = activado') }
+      'pers'  { [void](Show-TuiChecklist -Title '5. Personalizacion (todo reversible desde Settings)' -Items $PersonalizacionCatalog -Selected $p.personalizacion -Exclusive $PersonalizacionExclusivos -Legend 'default, NO policy: lo cambias cuando quieras') }
+      'apps'  { [void](Show-TuiChecklist -Title '6. Programas a instalar en el primer arranque' -Items $AppCatalog -Selected $p.programas -Legend 'se instalan por winget al primer login') }
+      'gen'   { return 'gen' }
+      'save'  { return 'save' }
+      'quit'  { return 'quit' }
+      $null   { return 'quit' }
+    }
+  }
+}
+
+# ===========================================================================
+#  PIPELINE
+# ===========================================================================
+function Invoke-Pipeline {
+  $fases = @(
+    @{ n='00-prepare-wim.ps1';    d='exportar Pro y montar el WIM' }
+    @{ n='01-remove-appx.ps1';    d='quitar apps preinstaladas' }
+    @{ n='02-remove-onedrive.ps1';d='OneDrive' }
+    @{ n='03-privacy-policies.ps1'; d='privacidad y policies' }
+    @{ n='04-services.ps1';       d='servicios' }
+    @{ n='05-ui-tweaks.ps1';      d='tweaks de UI' }
+    @{ n='06-features.ps1';       d='features y capabilities' }
+    @{ n='07-remove-edge.ps1';    d='bloquear Edge' }
+    @{ n='10-personalizar.ps1';   d='personalizacion (tema, color)' }
+    @{ n='11-apps.ps1';           d='instalador de programas' }
+    @{ n='08-inject-runtime.ps1'; d='SetupComplete + autounattend' }
+    @{ n='09-build-iso.ps1';      d='cerrar WIM y armar la ISO' }
+  )
+  Clear-Host
+  Write-Host ''
+  Write-Host '  Generando la ISO. Esto tarda entre 45 y 60 minutos.' -ForegroundColor Cyan
+  Write-Host '  No cierres la consola. Si algo falla, el error queda a la vista.' -ForegroundColor DarkGray
+  Write-Host ''
+  $i = 0
+  foreach ($f in $fases) {
+    $i++
+    $path = Join-Path $root "scripts\$($f.n)"
+    if (-not (Test-Path $path)) { Write-Host "  [$i/$($fases.Count)] (no existe, salteo) $($f.n)" -ForegroundColor DarkGray; continue }
+    Write-Host ("  [{0}/{1}] {2} -- {3}" -f $i, $fases.Count, $f.n, $f.d) -ForegroundColor Cyan
+    & $path
+    if ($LASTEXITCODE -and $LASTEXITCODE -ne 0) {
+      Write-Host "  ABORTADO en $($f.n) (exit $LASTEXITCODE)" -ForegroundColor Red
+      return $false
+    }
+  }
+  $true
+}
+
+# ===========================================================================
+#  SELF-TEST — valida la logica sin UI ni build
+# ===========================================================================
+# Existe porque una TUI no se puede testear con input automatizado, pero SI se
+# puede testear todo lo que hay debajo: catalogos, perfil, y la traduccion a las
+# variables globales que leen las fases. Ahi vive el 90% de los bugs posibles.
+function Invoke-SelfTest {
+  $fail = 0
+  function Chk($name, $cond, $detail = '') {
+    if ($cond) { Write-Host "  OK    $name" -ForegroundColor Green }
+    else       { Write-Host "  FALLA $name $detail" -ForegroundColor Red; $script:fail++ }
+  }
+  $script:fail = 0
+  Write-Host ''
+  Write-Host '== SELF-TEST de LunaticOS ==' -ForegroundColor Cyan
+
+  # --- Catalogos ---
+  $appx = @(Build-AppxCatalog); $svc = @(Build-ServiceCatalog)
+  $feat = @(Build-FeatureCatalog); $flg = @(Build-FlagCatalog)
+  Chk "catalogo appx no vacio ($($appx.Count))"              ($appx.Count -gt 0)
+  Chk "catalogo servicios no vacio ($($svc.Count))"          ($svc.Count -gt 0)
+  Chk "catalogo features no vacio ($($feat.Count))"          ($feat.Count -gt 0)
+  Chk "catalogo flags no vacio ($($flg.Count))"              ($flg.Count -gt 0)
+  Chk "catalogo personalizacion no vacio ($($PersonalizacionCatalog.Count))" ($PersonalizacionCatalog.Count -gt 0)
+  Chk "catalogo apps no vacio ($($AppCatalog.Count))"        ($AppCatalog.Count -gt 0)
+
+  # --- Claves duplicadas: romperian el toggle (marcas una, se marca otra) ---
+  foreach ($pair in @(@{n='appx';c=$appx}, @{n='servicios';c=$svc}, @{n='features';c=$feat},
+                      @{n='flags';c=$flg}, @{n='personalizacion';c=$PersonalizacionCatalog},
+                      @{n='apps';c=$AppCatalog})) {
+    # OJO: `Group-Object Key` sobre HASHTABLES no agrupa por la clave del hashtable
+    # -- un hashtable expone .Keys, no .Key, asi que todos caen en un grupo con Name
+    # nulo y parecen duplicados. Hay que extraer los strings ANTES de agrupar.
+    $dup = @($pair.c | ForEach-Object { $_.Key } | Group-Object | Where-Object Count -gt 1 | ForEach-Object Name)
+    Chk "sin claves duplicadas en $($pair.n)" ($dup.Count -eq 0) ("-> " + ($dup -join ', '))
+  }
+
+  # --- Todo item de la TUI necesita Name y Key, o la lista se ve vacia ---
+  foreach ($pair in @(@{n='personalizacion';c=$PersonalizacionCatalog}, @{n='apps';c=$AppCatalog})) {
+    $sinNombre = @($pair.c | Where-Object { -not $_.Name -or -not $_.Key })
+    Chk "todos los items de $($pair.n) tienen Key y Name" ($sinNombre.Count -eq 0)
+  }
+
+  # --- Apps: coherencia de Src / Id / Url ---
+  $sinId  = @($AppCatalog | Where-Object { $_.Src -in @('winget','msstore') -and -not $_.Id })
+  Chk 'toda app winget/msstore tiene Id' ($sinId.Count -eq 0) ("-> " + (($sinId | ForEach-Object Key) -join ', '))
+  $sinUrl = @($AppCatalog | Where-Object { $_.Src -eq 'manual' -and -not $_.Url })
+  Chk 'toda app manual tiene Url' ($sinUrl.Count -eq 0) ("-> " + (($sinUrl | ForEach-Object Key) -join ', '))
+  $srcMal = @($AppCatalog | Where-Object { $_.Src -notin @('winget','msstore','manual') })
+  Chk 'ningun Src invalido' ($srcMal.Count -eq 0)
+
+  # --- WebView2 NUNCA debe estar en la lista de bloqueo de Edge (rompe Store/Widgets) ---
+  Chk 'msedgewebview2.exe NO esta bloqueado' ($EdgeBlockedExes -notcontains 'msedgewebview2.exe')
+
+  # --- Personalizacion: nada debe escribir en Policies ---
+  $pol = @()
+  foreach ($it in $PersonalizacionCatalog) {
+    foreach ($r in $it.Regs) { if ("$($r.k)" -like '*Policies*') { $pol += "$($it.Key) -> $($r.k)" } }
+  }
+  Chk 'personalizacion NO usa policies (no bloquea Settings)' ($pol.Count -eq 0) ("-> " + ($pol -join '; '))
+
+  # --- Grupos excluyentes: las claves tienen que existir ---
+  foreach ($grp in $PersonalizacionExclusivos) {
+    foreach ($k in $grp) {
+      Chk "clave excluyente '$k' existe en el catalogo" (@($PersonalizacionCatalog | Where-Object Key -eq $k).Count -eq 1)
+    }
+  }
+
+  # --- Perfil: ida y vuelta por JSON ---
+  $p = New-DefaultProfile
+  Chk 'perfil default se genera' ($null -ne $p)
+  $tmp = Join-Path $env:TEMP 'lunaticos-selftest.json'
+  Export-Profile $p $tmp '1999-01-01 00:00'
+  $p2 = Import-Profile $tmp
+  Chk 'perfil se guarda y se relee' ($null -ne $p2)
+  Chk 'la cantidad de appx sobrevive el round-trip'   ($p.appx.Count -eq $p2.appx.Count)
+  Chk 'la cantidad de programas sobrevive el round-trip' ($p.programas.Count -eq $p2.programas.Count)
+
+  # --- Perfil viejo (le faltan claves): NO debe romper ---
+  '{ "version":1, "flags": { "RemoveOneDrive": false } }' | Set-Content $tmp -Encoding UTF8
+  $p3 = Import-Profile $tmp
+  Chk 'un perfil incompleto no rompe (rellena con defaults)' ($null -ne $p3 -and $p3.appx.Count -gt 0)
+  Chk 'y respeta lo que si trae' ($p3.flags['RemoveOneDrive'] -eq $false)
+
+  # --- Perfil corrupto: tampoco debe romper ---
+  'esto no es json {{{' | Set-Content $tmp -Encoding UTF8
+  $p4 = Import-Profile $tmp
+  Chk 'un perfil corrupto se ignora sin explotar' ($null -eq $p4)
+  Remove-Item $tmp -Force -EA SilentlyContinue
+
+  # --- Traduccion a las variables que leen las fases ---
+  Set-GlobalsFromProfile $p
+  Chk 'AppxRemove poblado desde el perfil'        (@($Global:AppxRemove).Count -gt 0)
+  Chk 'ServicesDisable poblado desde el perfil'   (@($Global:ServicesDisable).Count -gt 0)
+  Chk 'CapabilitiesRemove sin prefijo "cap:"'     (-not (@($Global:CapabilitiesRemove) -match '^cap:'))
+  Chk 'FeaturesDisable sin prefijo "feat:"'       (-not (@($Global:FeaturesDisable) -match '^feat:'))
+  Chk 'AppsPicked poblado'                        (@($Global:AppsPicked).Count -gt 0)
+
+  # --- Los blindados NO deben poder salir en AppxRemove ---
+  $leak = @($Global:AppxRemove | Where-Object { $AppxKeep -contains $_ })
+  Chk 'ningun appx BLINDADO en la lista de remocion' ($leak.Count -eq 0) ("-> " + ($leak -join ', '))
+
+  # --- Las fases que el pipeline invoca tienen que existir ---
+  foreach ($f in @('00-prepare-wim.ps1','01-remove-appx.ps1','02-remove-onedrive.ps1',
+                   '03-privacy-policies.ps1','04-services.ps1','05-ui-tweaks.ps1',
+                   '06-features.ps1','07-remove-edge.ps1','10-personalizar.ps1',
+                   '11-apps.ps1','08-inject-runtime.ps1','09-build-iso.ps1')) {
+    Chk "existe scripts\$f" (Test-Path (Join-Path $root "scripts\$f"))
+  }
+
+  Write-Host ''
+  if ($script:fail -eq 0) { Write-Host "  TODO OK ($($script:fail) fallas)" -ForegroundColor Green; return 0 }
+  Write-Host "  $($script:fail) FALLAS" -ForegroundColor Red
+  1
+}
+
+if ($SelfTest) { exit (Invoke-SelfTest) }
+
+# ===========================================================================
+#  MAIN
+# ===========================================================================
+if (-not $NoPreflight) { if (-not (Invoke-Preflight)) { exit 1 } }
+
+$profile = Import-Profile $ProfilePath
+if (-not $profile) { $profile = New-DefaultProfile }
+
+$action = if ($Apply) { 'gen' } else { Show-MainMenu $profile }
+
+switch ($action) {
+  'quit' { Clear-Host; Write-Host '  Sin cambios.' -ForegroundColor DarkGray; exit 0 }
+  'save' {
+    Export-Profile $profile $ProfilePath (Get-Date -Format 'yyyy-MM-dd HH:mm')
+    Clear-Host
+    Write-Host "  Perfil guardado en $ProfilePath" -ForegroundColor Green
+    Write-Host '  Podes compartirlo: quien lo use genera la MISMA ISO que vos.' -ForegroundColor DarkGray
+    exit 0
+  }
+  'gen' {
+    Export-Profile $profile $ProfilePath (Get-Date -Format 'yyyy-MM-dd HH:mm')
+    Set-GlobalsFromProfile $profile
+    if (Invoke-Pipeline) {
+      Write-Host ''
+      Write-Host '  ISO LISTA.' -ForegroundColor Green
+      Write-Host '  Grabala con Ventoy (copiar el .iso) o con Rufus (GPT/UEFI).' -ForegroundColor White
+      Write-Host '  Checklist de instalacion: docs\dia-d.md' -ForegroundColor DarkGray
+    } else {
+      Write-Host ''
+      Write-Host '  El pipeline se corto. Revisa el error de arriba.' -ForegroundColor Red
+      exit 1
+    }
+  }
+}

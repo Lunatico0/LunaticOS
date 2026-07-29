@@ -22,3 +22,8 @@ desktop.ini
 .DS_Store
 .vs/
 .idea/
+
+# Perfil local del usuario (cada uno tiene el suyo)
+perfil.json
+# Wallpaper propio
+config/wallpaper/
