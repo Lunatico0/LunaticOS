@@ -1,6 +1,6 @@
 #requires -Version 5.1
 <#
-  Fase 11 — Inyectar el instalador de programas del primer arranque.
+  Fase 11 -- Inyectar el instalador de programas del primer arranque.
 
   ===========================================================================
   POR QUE NO SE METEN LOS INSTALADORES DENTRO DE LA ISO
@@ -172,7 +172,21 @@ Write-Step "instalador generado: Windows\Setup\Scripts\lunaticos-apps.ps1 ($($wi
 # Orden:  AA personalizar (rapido) -> AB limpiar Edge (rapido) -> ZZ apps (lento).
 Use-OfflineHive -HivePath (Join-Path $mount 'Windows\System32\config\SOFTWARE') -MountKey 'OFF_SW_APPS' -Action {
   param($root)
-  $cmd = 'powershell.exe -NoProfile -ExecutionPolicy Bypass -File "C:\Windows\Setup\Scripts\lunaticos-apps.ps1"'
+  # ###################################################################
+  #  LAS COMILLAS VAN ESCAPADAS CON \" . NO LAS "LIMPIES".
+  #
+  #  PowerShell 5.1 se come las comillas dobles al pasar argumentos a un .exe
+  #  nativo. MEDIDO escribiendo y releyendo el registro:
+  #    /d '... -File "C:\Windows\Setup\Scripts\x.ps1"'   -> queda SIN comillas
+  #    /d '... -File "C:\Ruta Con Espacios\x.ps1"'       -> queda VACIO (!!)
+  #    /d '... -File \"C:\...\x.ps1\"'                   -> queda con comillas OK
+  #
+  #  Hoy la ruta no tiene espacios, asi que sin comillas funciona igual: el bug es
+  #  LATENTE. Pero el dia que la ruta tenga un espacio, el valor del RunOnce queda
+  #  vacio y los programas no se instalan, sin ningun error a la vista.
+  #  Es el mismo patron que usa la fase 10 para su propio RunOnce.
+  # ###################################################################
+  $cmd = 'powershell.exe -NoProfile -ExecutionPolicy Bypass -File \"C:\Windows\Setup\Scripts\lunaticos-apps.ps1\"'
   Invoke-Reg add "$root\Microsoft\Windows\CurrentVersion\RunOnce" /v ZZLunaticOSApps /t REG_SZ /d $cmd /f
 }
 Write-Step "RunOnce ZZLunaticOSApps: se instalan en el primer login (ultimo de la cola)" 'Green'

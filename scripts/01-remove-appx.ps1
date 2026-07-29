@@ -1,6 +1,6 @@
 #requires -Version 5.1
 <#
-  Fase 1 — Remover appx provisioned del WIM montado (offline).
+  Fase 1 -- Remover appx provisioned del WIM montado (offline).
   Lee la lista de config.ps1. Blinda lo que este en AppxKeep aunque figure en Remove.
 
   Requiere: WIM ya montado en $CFG.Mount (ver 00-mount).

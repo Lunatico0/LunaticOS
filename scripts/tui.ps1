@@ -1,6 +1,6 @@
 #requires -Version 5.1
 <#
-  tui.ps1 — Interfaz de consola de LunaticOS. Sin dependencias externas.
+  tui.ps1 -- Interfaz de consola de LunaticOS. Sin dependencias externas.
 
   DECISIONES DE IMPLEMENTACION (por si te preguntas por que asi):
 
@@ -59,7 +59,7 @@ function Wrap-TuiText([string]$text, [int]$width) {
 }
 
 <#
-  Show-TuiChecklist — lista navegable con marcas.
+  Show-TuiChecklist -- lista navegable con marcas.
 
   $Items: array de hashtables con al menos Key / Name. Opcionales: Rec, Note, Cat.
   $Selected: hashtable Key -> $true/$false (SE MODIFICA en el lugar, es la salida).
@@ -182,7 +182,7 @@ function Show-TuiChecklist {
 }
 
 <#
-  Show-TuiMenu — menu principal. $Entries: array de @{ Key; Label; Info }.
+  Show-TuiMenu -- menu principal. $Entries: array de @{ Key; Label; Info }.
   Devuelve la Key elegida, o $null si el usuario salio con Esc/Q.
 #>
 function Show-TuiMenu {

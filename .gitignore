@@ -27,3 +27,8 @@ desktop.ini
 perfil.json
 # Wallpaper propio
 config/wallpaper/
+
+# === Licencia de Windows: NUNCA al repo ===
+# La clave del usuario. El perfil.json se comparte para reproducir una ISO; la
+# licencia no. El .ejemplo si esta versionado (tiene las instrucciones).
+clave-windows.txt

@@ -1,12 +1,12 @@
 #requires -Version 5.1
 <#
-  config.ps1 — Fuente de verdad del debloat. TOCÁ ESTO, no la lógica.
-  Cada compa ajusta acá qué sacar/dejar segun su gusto, sin editar los scripts de fase.
+  config.ps1 -- Fuente de verdad del debloat. TOCA ESTO, no la logica.
+  Cada compa ajusta aca que sacar/dejar segun su gusto, sin editar los scripts de fase.
 
   Se carga con dot-sourcing:  . "$PSScriptRoot\config.ps1"
 #>
 
-# --- Rutas (relativas al repo → portables al clonar) ---
+# --- Rutas (relativas al repo -> portables al clonar) ---
 $root = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $adk  = 'C:\Program Files (x86)\Windows Kits\10\Assessment and Deployment Kit\Deployment Tools\amd64'
 
@@ -19,7 +19,7 @@ $Global:CFG = @{
 }
 
 # --- APPX a REMOVER (perfil de referencia: dev pesado + FPS competitivo) ---
-#     Comentá con # cualquier linea para CONSERVAR esa app.
+#     Comenta con # cualquier linea para CONSERVAR esa app.
 $Global:AppxRemove = @(
   'Clipchamp.Clipchamp'
   'Microsoft.BingNews'
@@ -43,20 +43,20 @@ $Global:AppxRemove = @(
 
 # --- APPX BLINDADAS: NUNCA se tocan aunque aparezcan en Remove (guarda de seguridad) ---
 $Global:AppxKeep = @(
-  # Dependencias / sistema — romper esto rompe winget/Store/seguridad
+  # Dependencias / sistema -- romper esto rompe winget/Store/seguridad
   'Microsoft.DesktopAppInstaller','Microsoft.WindowsStore','Microsoft.StorePurchaseApp'
   'Microsoft.SecHealthUI','Microsoft.ApplicationCompatibilityEnhancements'
-  # Apps utiles / que usás
+  # Apps utiles / que usas
   'Microsoft.WindowsTerminal','Microsoft.WindowsNotepad','Microsoft.WindowsCalculator'
   'Microsoft.Paint','Microsoft.ScreenSketch','Microsoft.Windows.Photos'
-  # Xbox completo (tu decisión)
+  # Xbox completo (tu decision)
   'Microsoft.GamingApp','Microsoft.Xbox.TCUI','Microsoft.XboxGamingOverlay'
   'Microsoft.XboxIdentityProvider','Microsoft.XboxSpeechToTextOverlay'
-  # Zona gris resuelta → DEJAR
+  # Zona gris resuelta -> DEJAR
   'Microsoft.BingSearch','Microsoft.ZuneMusic','Microsoft.WindowsCamera'
   # Widgets: se CONSERVA (el usuario quiere el clima en la taskbar sin ads; ver flag ShowWeatherWidget)
   'MicrosoftWindows.Client.WebExperience'
-  # Codecs — sacarlos rompe reproduccion de video/imagenes
+  # Codecs -- sacarlos rompe reproduccion de video/imagenes
   'Microsoft.AV1VideoExtension','Microsoft.AVCEncoderVideoExtension','Microsoft.HEIFImageExtension'
   'Microsoft.HEVCVideoExtension','Microsoft.MPEG2VideoExtension','Microsoft.RawImageExtension'
   'Microsoft.VP9VideoExtensions','Microsoft.WebMediaExtensions','Microsoft.WebpImageExtension'
@@ -64,7 +64,7 @@ $Global:AppxKeep = @(
 
 # --- Flags de fases posteriores ---
 $Global:Flags = @{
-  RemoveOneDrive  = $true   # sacar el cloud de MS (OneDrive) — pedido explicito
+  RemoveOneDrive  = $true   # sacar el cloud de MS (OneDrive) -- pedido explicito
   KillTelemetry   = $true   # DiagTrack + policy + scheduled tasks
   DisableCopilot  = $true
   DisableRecall   = $true
@@ -133,7 +133,7 @@ $Global:ServicesDisable = @(
   'wercplsupport'            # panel de "informes de problemas"
   'PcaSvc'                   # Program Compatibility Assistant (registra que ejecutas)
   'DsSvc'                    # Data Sharing Service
-  'wisvc'                    # Windows Insider — coherente con D2 (nada de Insider)
+  'wisvc'                    # Windows Insider -- coherente con D2 (nada de Insider)
 
   # --- Ubicacion, mapas, sensores ---
   'MapsBroker'               # mapas descargados
@@ -168,55 +168,55 @@ $Global:ServicesDisable = @(
 )
 
 # ===========================================================================
-#  SERVICIOS OPCIONALES — dependen de TU hardware y de TU uso.
+#  SERVICIOS OPCIONALES -- dependen de TU hardware y de TU uso.
 #
-#  NO estan activos. Para deshabilitar alguno, mové la linea al bloque de
-#  arriba. Cada uno dice que perdés: leé antes de mover, no copies a ciegas.
+#  NO estan activos. Para deshabilitar alguno, move la linea al bloque de
+#  arriba. Cada uno dice que perdes: lee antes de mover, no copies a ciegas.
 #  Esta lista es informativa; el script NO la usa.
 # ===========================================================================
 $Global:ServicesOptional = @{
   # --- Perifericos ---
-  'Spooler'          = 'Cola de impresion. Deshabilitá si NO tenés impresora. Bonus: cierra el vector de PrintNightmare. Rompe tambien "Imprimir a PDF".'
-  'stisvc'           = 'Windows Image Acquisition: escaneres y algunas camaras. Deshabilitá si no escaneás.'
-  'bthserv'          = 'Bluetooth. Deshabilitá si no usás nada BT (mouse, auriculares, joystick).'
+  'Spooler'          = 'Cola de impresion. Deshabilita si NO tenes impresora. Bonus: cierra el vector de PrintNightmare. Rompe tambien "Imprimir a PDF".'
+  'stisvc'           = 'Windows Image Acquisition: escaneres y algunas camaras. Deshabilita si no escaneas.'
+  'bthserv'          = 'Bluetooth. Deshabilita si no usas nada BT (mouse, auriculares, joystick).'
   'BthAvctpSvc'      = 'Audio/control por Bluetooth. Va junto con bthserv.'
-  'WbioSrvc'         = 'Biometria (Windows Hello: huella y cara). Deshabilitá si entrás con PIN o password.'
+  'WbioSrvc'         = 'Biometria (Windows Hello: huella y cara). Deshabilita si entras con PIN o password.'
 
   # --- Escritorio remoto ---
-  'TermService'      = 'Escritorio remoto ENTRANTE. Deshabilitá si nadie se conecta a esta maquina. NO afecta conectarte VOS a otras.'
+  'TermService'      = 'Escritorio remoto ENTRANTE. Deshabilita si nadie se conecta a esta maquina. NO afecta conectarte VOS a otras.'
   'SessionEnv'       = 'Configuracion de sesion de RDP. Va junto con TermService.'
   'UmRdpService'     = 'Redireccion de impresoras/discos por RDP. Va junto con TermService.'
 
   # --- Red: OJO ACA (D5) ---
-  'SSDPSRV'          = 'UPnP discovery. CUIDADO GAMING: algunos juegos y consolas lo usan para abrir NAT. Si tenés NAT tipo estricto, este es el culpable.'
+  'SSDPSRV'          = 'UPnP discovery. CUIDADO GAMING: algunos juegos y consolas lo usan para abrir NAT. Si tenes NAT tipo estricto, este es el culpable.'
   'upnphost'         = 'Host de dispositivos UPnP. Mismo cuidado que SSDPSRV.'
-  'SharedAccess'     = 'Internet Connection Sharing. CUIDADO: el Default Switch de Hyper-V lo usa. Si virtualizás, dejalo.'
+  'SharedAccess'     = 'Internet Connection Sharing. CUIDADO: el Default Switch de Hyper-V lo usa. Si virtualizas, dejalo.'
   'lltdsvc'          = 'Descubrimiento de topologia de red (el mapa de red). Inofensivo de sacar, pero es red: por D5 queda opcional.'
 
   # --- Rendimiento y busqueda (los mas discutidos) ---
-  'WSearch'          = 'Windows Search. Apagarlo baja I/O de fondo, pero perdés la busqueda del menu Inicio y de Explorer. Para dev que busca archivos seguido, MALA idea.'
+  'WSearch'          = 'Windows Search. Apagarlo baja I/O de fondo, pero perdes la busqueda del menu Inicio y de Explorer. Para dev que busca archivos seguido, MALA idea.'
   'SysMain'          = 'SysMain (ex Superfetch). El clasico "apagalo para gamear", pero en 25H2 con SSD puede EMPEORAR tiempos de carga. Medilo antes de creerle a un foro.'
 
   # --- Diagnostico ---
   'DPS'              = 'Diagnostic Policy Service. Deshabilitarlo rompe los solucionadores de problemas de Windows (los de red incluidos).'
   'WdiServiceHost'   = 'Host de diagnostico. Va junto con DPS.'
   'WdiSystemHost'    = 'Host de diagnostico del sistema. Va junto con DPS.'
-  'diagnosticshub.standardcollector.service' = 'CUIDADO DEV: lo usa el PROFILER de Visual Studio. Si perfilás codigo, dejalo.'
+  'diagnosticshub.standardcollector.service' = 'CUIDADO DEV: lo usa el PROFILER de Visual Studio. Si perfilas codigo, dejalo.'
 
   # --- Notificaciones y sincronizacion ---
   'WpnService'       = 'Notificaciones push. Apagarlo mata las notificaciones de TODAS las apps, no solo las de MS.'
   'CDPSvc'           = 'Connected Devices Platform. Afecta portapapeles compartido y continuidad entre dispositivos.'
-  'OneSyncSvc'       = 'Sincroniza Mail/Calendario/Contactos. Inutil si no usás las apps de Microsoft.'
+  'OneSyncSvc'       = 'Sincroniza Mail/Calendario/Contactos. Inutil si no usas las apps de Microsoft.'
   'DevicePickerUserSvc' = 'Selector de dispositivos para proyectar/transmitir.'
   'DevicesFlowUserSvc'  = 'Emparejamiento de dispositivos.'
 
   # --- Realidad mixta / VR ---
-  'MixedRealityOpenXRSvc' = 'OpenXR de Mixed Reality. CUIDADO: si tenés visor VR (Quest por Link, Index, etc.) lo necesitás.'
+  'MixedRealityOpenXRSvc' = 'OpenXR de Mixed Reality. CUIDADO: si tenes visor VR (Quest por Link, Index, etc.) lo necesitas.'
   'spectrum'              = 'Windows Perception Service (MR). Mismo cuidado que el anterior.'
   'perceptionsimulation'  = 'Simulacion de percepcion (MR). Seguro de sacar si no hay VR.'
 
   # --- Cifrado ---
-  'EFS'              = 'Encrypting File System (cifrado por archivo del NTFS). No es BitLocker. Deshabilitá si no usás EFS — pero si tenés archivos ya cifrados con EFS, NO los vas a poder abrir.'
+  'EFS'              = 'Encrypting File System (cifrado por archivo del NTFS). No es BitLocker. Deshabilita si no usas EFS -- pero si tenes archivos ya cifrados con EFS, NO los vas a poder abrir.'
 }
 
 # --- CAPABILITIES a remover (por PREFIJO; el script resuelve nombre+version instalado) ---

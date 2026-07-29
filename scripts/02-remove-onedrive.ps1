@@ -1,6 +1,6 @@
 #requires -Version 5.1
 <#
-  Fase 2 — Sacar OneDrive (el cloud de MS) de la imagen, offline.
+  Fase 2 -- Sacar OneDrive (el cloud de MS) de la imagen, offline.
     1) Borra OneDriveSetup.exe del WIM (System32 / SysWOW64)
     2) Policy DisableFileSyncNGSC=1                         (SOFTWARE hive)
     3) Oculta la carpeta OneDrive del panel del Explorador  (SOFTWARE hive, CLSID)

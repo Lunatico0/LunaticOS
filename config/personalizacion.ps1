@@ -1,6 +1,6 @@
 #requires -Version 5.1
 <#
-  personalizacion.ps1 — Estetica de LunaticOS.
+  personalizacion.ps1 -- Estetica de LunaticOS.
 
   ===========================================================================
   REGLA DE ORO DE ESTE ARCHIVO: TODO VA COMO *DEFAULT*, NADA COMO *POLICY*.
@@ -28,7 +28,7 @@
     Rec   $true -> marcado como (recomendado)
     Note  que hace, o que hay que saber
     Regs  lista de valores a escribir en el hive DEFAULT (rutas relativas a HKCU)
-            k = subclave · v = nombre · d = dato · t = tipo (dword|sz)
+            k = subclave - v = nombre - d = dato - t = tipo (dword|sz)
 #>
 
 $Global:PersonalizacionCatalog = @(
@@ -101,56 +101,50 @@ $Global:PersonalizacionCatalog = @(
      ) }
 
   # ---------------------------------------------------------------- COLOR DE ACENTO
-  # OJO CON ESTO: el color de acento de Windows 11 no es un solo valor. La UI usa
-  # tambien AccentPalette, un blob BINARIO de 32 bytes con 8 tonos derivados. Escribir
-  # solo AccentColor deja partes de la UI con el color viejo. Por eso la fase 10
-  # calcula el AccentPalette y lo escribe en el primer login.
-  # El usuario igual puede elegir CUALQUIER color despues, desde Settings.
-  #
   # ###################################################################
-  #  EL SUFIJO 'L' DE LOS VALORES NO ES DECORATIVO. NO LO SAQUES.
+  #  EL COLOR SE DECLARA UNA SOLA VEZ, EN HEX, EN EL CAMPO 'Accent'.
+  #  NO pongas Regs de color aca. NO escribas DWORDs de color en ningun archivo.
   #
-  #  PowerShell parsea un literal hexadecimal de 8 digitos como Int32 CON SIGNO:
-  #      0xFF14B8A6         ->  -15419226   (Int32, NEGATIVO)
-  #      0xFF14B8A6L        ->  4279548070  (Int64, correcto)
-  #  Estos colores son ARGB con alpha FF, asi que el bit alto siempre esta prendido
-  #  y SIEMPRE caen en negativo sin la L. Con un negativo, el `reg add /t REG_DWORD`
-  #  escribe basura o falla, y `[uint32]` de un negativo tira excepcion.
-  #  Sintoma real: los tres valores del acento fallaban EN SILENCIO y Windows se
-  #  quedaba con su azul por defecto.
-  #  El self-test de LunaticOS.ps1 verifica que todos los DWORD entren en uint32:
-  #  si alguien saca una L, falla ahi antes de llegar a una ISO.
+  #  POR QUE: el acento no es un solo valor de registro, son seis (AccentColor,
+  #  AccentColorInactive, AccentColorMenu, StartColorMenu, ColorizationColor,
+  #  ColorizationAfterglow) mas AccentPalette, un blob de 32 bytes con 8 tonos.
+  #  Y NO TODOS USAN EL MISMO ORDEN DE BYTES: AccentColor es ABGR y
+  #  ColorizationColor es ARGB, en la misma clave del registro.
+  #
+  #  Este archivo tenia los DWORD escritos a mano, todos en ARGB. Resultado medido:
+  #  el teal #14B8A6 se veia como #A6B814 (un verde lima) en la taskbar y los
+  #  bordes, mientras que otras partes de la UI si lo tomaban teal. Eso es
+  #  exactamente el "coloreado a la fuerza" que reporto el usuario: la UI con dos
+  #  colores distintos al mismo tiempo.
+  #
+  #  QUIEN LO APLICA AHORA: la fase 10 genera un LunaticOS.theme y apunta
+  #  HKLM\...\Themes\InstallTheme ahi. Windows aplica ese tema al crear el perfil
+  #  con SU PROPIO motor, que deriva la paleta de 8 tonos correctamente. Nosotros
+  #  no calculamos ningun tono: el escalado lineal en RGB que haciamos antes daba
+  #  colores quemados que no coincidian con los que genera Settings.
+  #  Y sigue siendo REVERSIBLE: es un tema, no una policy. El usuario elige otro
+  #  color o otro tema desde Settings cuando quiera.
+  #
+  #  La conversion a los formatos de registro vive en UN solo lugar:
+  #  ConvertTo-AccentDwords, en scripts\lib.ps1.
+  #  Tabla completa de formatos y la evidencia: docs\personalizacion-contrato.md
   # ###################################################################
   @{ Key='acento-violeta'; Name='Color de acento: violeta'; Rec=$false
-     Note='Paleta completa (AccentPalette incluido). Podes cambiarlo despues en Settings > Colors.'
-     Regs=@(
-       @{k='Software\Microsoft\Windows\CurrentVersion\Explorer\Accent'; v='AccentColorMenu'; d=0xFF8B5CF6L; t='dword'}
-       @{k='Software\Microsoft\Windows\DWM';                            v='AccentColor';     d=0xFF8B5CF6L; t='dword'}
-       @{k='Software\Microsoft\Windows\DWM';                            v='ColorizationColor'; d=0xC48B5CF6L; t='dword'}
-       @{k='Software\Microsoft\Windows\DWM';                            v='ColorPrevalence'; d=0; t='dword'}
-     ) }
+     Accent='#8B5CF6'
+     Note='Lo aplica el tema de LunaticOS, con la paleta completa que deriva Windows. Podes cambiarlo despues en Settings > Personalization > Colors.' }
 
   @{ Key='acento-teal'; Name='Color de acento: teal'; Rec=$false
-     Note='Paleta completa. Excluyente con las otras opciones de acento.'
-     Regs=@(
-       @{k='Software\Microsoft\Windows\CurrentVersion\Explorer\Accent'; v='AccentColorMenu'; d=0xFF14B8A6L; t='dword'}
-       @{k='Software\Microsoft\Windows\DWM';                            v='AccentColor';     d=0xFF14B8A6L; t='dword'}
-       @{k='Software\Microsoft\Windows\DWM';                            v='ColorizationColor'; d=0xC414B8A6L; t='dword'}
-       @{k='Software\Microsoft\Windows\DWM';                            v='ColorPrevalence'; d=0; t='dword'}
-     ) }
+     Accent='#14B8A6'
+     Note='Lo aplica el tema de LunaticOS. Excluyente con las otras opciones de acento.' }
 
   @{ Key='acento-ambar'; Name='Color de acento: ambar'; Rec=$false
-     Note='Paleta completa. Excluyente con las otras opciones de acento.'
-     Regs=@(
-       @{k='Software\Microsoft\Windows\CurrentVersion\Explorer\Accent'; v='AccentColorMenu'; d=0xFFF59E0BL; t='dword'}
-       @{k='Software\Microsoft\Windows\DWM';                            v='AccentColor';     d=0xFFF59E0BL; t='dword'}
-       @{k='Software\Microsoft\Windows\DWM';                            v='ColorizationColor'; d=0xC4F59E0BL; t='dword'}
-       @{k='Software\Microsoft\Windows\DWM';                            v='ColorPrevalence'; d=0; t='dword'}
-     ) }
+     Accent='#F59E0B'
+     Note='Lo aplica el tema de LunaticOS. Excluyente con las otras opciones de acento.' }
 
   @{ Key='acento-en-taskbar'; Name='Color de acento tambien en taskbar y bordes'; Rec=$false
-     Note='Pinta la barra de tareas con el color elegido en vez de negro/blanco.'
+     Note='Pinta la barra de tareas con el color elegido en vez de negro/blanco. OJO: Windows SOLO permite esto con el tema OSCURO. Con tema claro la opcion aparece en gris en Settings y este valor no hace nada -- no es un error nuestro, es como funciona Windows.'
      Regs=@(
+       # Esto NO es un color, es un interruptor: por eso si va como Regs.
        @{k='Software\Microsoft\Windows\CurrentVersion\Themes\Personalize'; v='ColorPrevalence'; d=1; t='dword'}
      ) }
 
@@ -159,7 +153,20 @@ $Global:PersonalizacionCatalog = @(
      Note='Silencia el jingle del boot. OJO: este va en HKLM (es de maquina, no de usuario).'
      Machine=$true
      Regs=@(
-       @{k='SOFTWARE\Microsoft\Windows\CurrentVersion\Authentication\LogonUI\BootAnimation'; v='DisableStartupSound'; d=1; t='dword'}
+       # ###################################################################
+       #  LA RUTA ARRANCA EN 'Microsoft\', SIN EL PREFIJO 'SOFTWARE\'.
+       #
+       #  Los items con Machine=$true se escriben sobre el hive SOFTWARE ya
+       #  montado, asi que la ruta es RELATIVA A LA RAIZ DE ESE HIVE -- igual que
+       #  las de usuario son relativas a la raiz de NTUSER.DAT.
+       #
+       #  Este valor tenia el prefijo 'SOFTWARE\' de mas y terminaba escribiendose
+       #  en SOFTWARE\SOFTWARE\Microsoft\..., una rama que Windows no lee nunca.
+       #  O sea: la opcion NUNCA FUNCIONO, y fallaba en silencio porque
+       #  `reg.exe add` devuelve 0 igual cuando la clave no existe: la crea.
+       #  Un exit code 0 no significa "surtio efecto".
+       # ###################################################################
+       @{k='Microsoft\Windows\CurrentVersion\Authentication\LogonUI\BootAnimation'; v='DisableStartupSound'; d=1; t='dword'}
      ) }
 )
 

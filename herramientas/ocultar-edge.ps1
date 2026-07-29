@@ -29,7 +29,7 @@
   ===========================================================================
 
   EFECTO SECUNDARIO ACEPTADO: si algo del sistema intenta abrir un link con Edge,
-  falla en silencio. Poné otro navegador como predeterminado.
+  falla en silencio. Pone otro navegador como predeterminado.
 
   Uso (consola como Administrador):
       .\ocultar-edge.ps1
@@ -70,7 +70,7 @@ if ($Revert) {
       Step "desbloqueado: $exe"
     } else { Step "(no estaba bloqueado) $exe" 'DarkGray' }
   }
-  Write-Host "`nListo. Los accesos directos no se restauran: reinstala Edge si los querés." -ForegroundColor Yellow
+  Write-Host "`nListo. Los accesos directos no se restauran: reinstala Edge si los queres." -ForegroundColor Yellow
   return
 }
 
@@ -177,7 +177,7 @@ if ($svc) { Step "edgeupdate: $($svc.StartType) - a proposito VIVO, es quien par
 Write-Host ""
 if ($ok) {
   Write-Host "Edge oculto y bloqueado. WebView2 sigue al dia por EdgeUpdate." -ForegroundColor Green
-  Write-Host "Poné tu navegador (Firefox/Chrome) como predeterminado en Settings > Apps > Default apps." -ForegroundColor Yellow
+  Write-Host "Pone tu navegador (Firefox/Chrome) como predeterminado en Settings > Apps > Default apps." -ForegroundColor Yellow
 } else {
-  Write-Host "Termino con advertencias: revisá las lineas en rojo." -ForegroundColor Red
+  Write-Host "Termino con advertencias: revisa las lineas en rojo." -ForegroundColor Red
 }

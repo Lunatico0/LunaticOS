@@ -1,6 +1,6 @@
 #requires -Version 5.1
 <#
-  Fase 5 — Tweaks de UI (DEFAULT user hive, offline).
+  Fase 5 -- Tweaks de UI (DEFAULT user hive, offline).
     Se editan en Users\Default\NTUSER.DAT -> TODO perfil nuevo hereda estos ajustes.
     Explorer dev-friendly + taskbar limpia + sin ads/sugerencias + Bing web fuera del Inicio.
 

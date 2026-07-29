@@ -1,6 +1,6 @@
 #requires -Version 5.1
 <#
-  Fase 6 — Capabilities + optional features (DISM offline).
+  Fase 6 -- Capabilities + optional features (DISM offline).
     Capabilities: se remueven por prefijo (el script resuelve el nombre+version instalado en la imagen).
     Features: se deshabilitan por nombre exacto.
     Usa el DISM del ADK (26100). Blindaje: solo toca lo listado en config.

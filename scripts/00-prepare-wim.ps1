@@ -1,6 +1,6 @@
 #requires -Version 5.1
 <#
-  Fase 0 — Prepara el WIM de trabajo:
+  Fase 0 -- Prepara el WIM de trabajo:
     1) descarta cualquier mount previo (idempotente)
     2) monta la ISO original y exporta SOLO Windows 11 Pro (index 6) al arbol de build
     3) monta la imagen en work\mount, lista para las fases 1-6

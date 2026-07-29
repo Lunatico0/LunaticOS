@@ -50,7 +50,7 @@
   bloqueo es explicita y NO usa comodines.
 
   EFECTO SECUNDARIO ACEPTADO: si algo del sistema intenta abrir un link con Edge,
-  falla en silencio. Poné Firefox/Chrome como predeterminado.
+  falla en silencio. Pone Firefox/Chrome como predeterminado.
 
   Uso:  .\07-remove-edge.ps1           # aplica
         .\07-remove-edge.ps1 -DryRun   # muestra que haria

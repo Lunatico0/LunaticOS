@@ -1,6 +1,6 @@
 #requires -Version 5.1
 <#
-  LunaticOS.ps1 — Entry point unico. Elegis que querer, y genera tu ISO.
+  LunaticOS.ps1 -- Entry point unico. Elegis que querer, y genera tu ISO.
 
   Uso (consola como ADMINISTRADOR):
       .\LunaticOS.ps1
@@ -37,6 +37,11 @@ $root = $PSScriptRoot
 
 . "$root\scripts\tui.ps1"
 . "$root\scripts\config.ps1"
+# lib.ps1 trae ConvertTo-AccentDwords, la UNICA conversion de color del repo. El
+# self-test la necesita para verificar que el acento sale del color pedido: el test
+# viejo solo miraba que el DWORD entrara en uint32 y daba VERDE con los bytes al
+# reves. Las fases igual la cargan por su cuenta.
+. "$root\scripts\lib.ps1"
 . "$root\config\apps.ps1"
 . "$root\config\personalizacion.ps1"
 
@@ -169,6 +174,8 @@ function Build-FlagCatalog {
        Note='Edge queda invisible e inejecutable (IFEO), pero WebView2 sigue actualizandose solo. NECESITAS instalar otro navegador y ponerlo como predeterminado.' }
     @{ Key='DisableLocation';   Name='Desactivar ubicacion (policy)'; Rec=$false
        Note='CUIDADO: esto BLOQUEA el panel Privacidad > Ubicacion en gris y no lo podes reactivar desde Settings. Ademas choca con el clima de Widgets. Por eso viene desmarcado.' }
+    @{ Key='BlockCloudContent'; Name='Bloquear contenido sugerido (policy)'; Rec=$false
+       Note='CUIDADO: son las 3 policies de CloudContent y son LAS QUE PONEN EL CARTEL "administradas por tu organizacion" en Settings. Ademas ocultan opciones de Personalization > Background. Cortan las sugerencias de apps y el contenido promocionado. Por eso viene desmarcado: el resto del debloat (telemetria, Copilot, Recall, ads) NO necesita esto.' }
   )
 }
 
@@ -279,7 +286,40 @@ function Invoke-Preflight {
   $iso = Find-SourceIso
   if ($iso) { Write-Host "  [OK]    ISO de Windows: $(Split-Path $iso -Leaf)" -ForegroundColor Green }
   else      { Write-Host '  [FALLA] no encontre la ISO oficial de Windows 11 en work\' -ForegroundColor Red
-              $fatal += 'Poné la ISO oficial de Windows 11 x64 en work\ (bajala de microsoft.com/software-download/windows11).' }
+              $fatal += 'Pone la ISO oficial de Windows 11 x64 en work\ (bajala de microsoft.com/software-download/windows11).' }
+
+  # ==========================================================================
+  #  --- Clave de Windows ---
+  #  Esto NO es fatal, pero avisar ACA es lo que evita la frustracion: sin
+  #  activacion, Settings > Personalization queda en gris (tema, color y fondo), y
+  #  eso no se descubre hasta 45 minutos de build mas una instalacion completa
+  #  despues. Le paso al usuario, y lo mando a buscar una policy que no existia.
+  # ==========================================================================
+  $claveFile = Join-Path $root 'clave-windows.txt'
+  if (Test-Path $claveFile) {
+    $lineasK = @(Get-Content $claveFile -EA SilentlyContinue | ForEach-Object { $_.Trim() } |
+                 Where-Object { $_ -ne '' -and -not $_.StartsWith('#') })
+    if ($lineasK.Count -eq 0) {
+      Write-Host '  [OJO]   clave-windows.txt esta vacio -> se usa la clave generica' -ForegroundColor Yellow
+      Write-Host '          Windows NO va a activarse y Personalization va a estar BLOQUEADA.' -ForegroundColor Yellow
+    } elseif ($lineasK[0].ToUpperInvariant() -notmatch '^[A-Z0-9]{5}(-[A-Z0-9]{5}){4}$') {
+      # Fatal a proposito: si la clave esta mal tipeada, mejor enterarse ahora que a
+      # los 45 minutos. El sintoma que deja no se parece en nada a la causa.
+      Write-Host "  [FALLA] la clave de clave-windows.txt tiene formato invalido: '$($lineasK[0])'" -ForegroundColor Red
+      $fatal += 'Corregi clave-windows.txt: se espera XXXXX-XXXXX-XXXXX-XXXXX-XXXXX en una linea.'
+    } else {
+      $gK = $lineasK[0].ToUpperInvariant().Split('-')
+      Write-Host ("  [OK]    clave de Windows propia: {0}{1}  (Windows se va a activar)" -f ('*****-' * 4), $gK[-1]) -ForegroundColor Green
+    }
+  } else {
+    Write-Host '  [OJO]   sin clave propia: se usa la generica de Pro, que NO activa Windows' -ForegroundColor Yellow
+    Write-Host '          Consecuencia: Settings > Personalization va a estar BLOQUEADA (tema,' -ForegroundColor Yellow
+    Write-Host '          color y fondo en gris) hasta que actives. No es un bug del debloat:' -ForegroundColor Yellow
+    Write-Host '          Windows lo bloquea por licenciamiento.' -ForegroundColor Yellow
+    Write-Host '          Para arreglarlo: copia clave-windows.txt.ejemplo a clave-windows.txt y' -ForegroundColor DarkGray
+    Write-Host '          pone tu clave adentro. Si tu mother ya tiene licencia digital vinculada,' -ForegroundColor DarkGray
+    Write-Host '          se activa sola y no hace falta.' -ForegroundColor DarkGray
+  }
 
   Write-Host ''
   if ($fatal) {
@@ -351,7 +391,7 @@ function Show-MainMenu($p) {
       @{ Key='appx';  Label='1. Apps preinstaladas a quitar';   Info="$nAppx marcadas"
          Note='Appx provisioned de la imagen. Las [BLINDADO] se muestran para que veas que se conserva y por que, pero no se pueden marcar.' }
       @{ Key='svc';   Label='2. Servicios a deshabilitar';      Info="$nSvc marcados"
-         Note='Los "opcional" dependen de tu hardware y tu uso: leé la nota de cada uno antes de marcarlo. Regla: Manual > Disabled cuando dudes.' }
+         Note='Los "opcional" dependen de tu hardware y tu uso: lee la nota de cada uno antes de marcarlo. Regla: Manual > Disabled cuando dudes.' }
       @{ Key='feat';  Label='3. Features y capabilities';       Info="$nFeat marcadas"
          Note='Componentes opcionales de Windows (IE 11, WMP legacy, escritura a mano, Work Folders).' }
       @{ Key='flags'; Label='4. Opciones del sistema';          Info="$nFlag activas"
@@ -379,7 +419,7 @@ function Show-MainMenu($p) {
         $locked    = @($cat | Where-Object { $_.Locked })
         [void](Show-TuiChecklist -Title '1. Apps preinstaladas a QUITAR de la imagen' `
                -Items ($editables + $locked) -Selected $p.appx `
-               -Legend 'marcado = SE QUITA · los [BLINDADO] se ignoran siempre')
+               -Legend 'marcado = SE QUITA - los [BLINDADO] se ignoran siempre')
         foreach ($l in $locked) { $p.appx.Remove($l.Key) }
       }
       'svc'   { [void](Show-TuiChecklist -Title '2. Servicios a DESHABILITAR' -Items (Build-ServiceCatalog) -Selected $p.servicios -Legend 'marcado = Start=4 (Disabled)') }
@@ -507,7 +547,7 @@ function Invoke-Pipeline {
 }
 
 # ===========================================================================
-#  SELF-TEST — valida la logica sin UI ni build
+#  SELF-TEST -- valida la logica sin UI ni build
 # ===========================================================================
 # Existe porque una TUI no se puede testear con input automatizado, pero SI se
 # puede testear todo lo que hay debajo: catalogos, perfil, y la traduccion a las
@@ -627,6 +667,169 @@ function Invoke-SelfTest {
     }
   }
   Chk 'todos los valores DWORD entran en uint32' ($overflow.Count -eq 0) ("-> " + ($overflow -join ', '))
+
+  # ==========================================================================
+  #  REGRESION: EL COLOR RESULTANTE, no el rango del entero.
+  #
+  #  El test de arriba (que un DWORD entre en uint32) daba VERDE con el acento
+  #  ESCRITO AL REVES. Medir que un numero entre en su tipo no dice NADA sobre si
+  #  el color es el que el usuario eligio.
+  #
+  #  El bug real: DWM\AccentColor es ABGR y ColorizationColor es ARGB, en la misma
+  #  clave del registro. Se escribia ARGB en los dos, asi que el teal #14B8A6
+  #  salia #A6B814 (verde lima) en la taskbar mientras otras partes de la UI si lo
+  #  tomaban teal. La UI con dos colores a la vez: el "coloreado a la fuerza".
+  #
+  #  Estos tests miden el COLOR, y el ancla es un dato de fabrica verificable:
+  #  el acento por defecto de Windows es AccentColor = 0xFFD77800 = #0078D7.
+  #  Si la conversion se rompe, este numero deja de coincidir.
+  # ==========================================================================
+  $c = ConvertTo-AccentDwords '#14B8A6'
+  Chk 'ConvertTo-AccentDwords: ABGR de #14B8A6 es 0xFFA6B814' `
+      ($c.Abgr -eq [uint32]4289116180) ("-> dio 0x{0:X8}" -f $c.Abgr)
+  Chk 'ConvertTo-AccentDwords: ARGB de #14B8A6 es 0xC414B8A6' `
+      ($c.Argb -eq [uint32]3289692326) ("-> dio 0x{0:X8}" -f $c.Argb)
+  Chk 'ConvertTo-AccentDwords: ThemeColor con formato de .theme' ($c.ThemeColor -eq '0XC414B8A6') "-> dio $($c.ThemeColor)"
+  # El ancla de fabrica. Este es EL test que agarra una inversion de bytes.
+  $azul = ConvertTo-AccentDwords '#0078D7'
+  Chk 'el azul de fabrica de Windows da 0xFFD77800 (ancla contra inversion de bytes)' `
+      ($azul.Abgr -eq [uint32]4292311040) ("-> dio 0x{0:X8}, la conversion esta invertida" -f $azul.Abgr)
+  # Ida y vuelta: reinterpretar el ABGR como bytes tiene que devolver el hex original.
+  $rt = @()
+  foreach ($h in @('#14B8A6', '#8B5CF6', '#F59E0B', '#0078D7', '#000000', '#FFFFFF')) {
+    $x = ConvertTo-AccentDwords $h
+    $back = '#{0:X2}{1:X2}{2:X2}' -f ($x.Abgr -band 0xFF), (($x.Abgr -shr 8) -band 0xFF), (($x.Abgr -shr 16) -band 0xFF)
+    if ($back -ne $h.ToUpperInvariant()) { $rt += "$h -> $back" }
+  }
+  Chk 'ida y vuelta del ABGR devuelve el mismo hex' ($rt.Count -eq 0) ("-> " + ($rt -join ', '))
+  # Un color invalido tiene que TIRAR. Fallar en silencio es lo que nos costo una ISO.
+  $tiro = $false
+  try { ConvertTo-AccentDwords 'ZZZZZZ' | Out-Null } catch { $tiro = $true }
+  Chk 'un color invalido tira error (no falla en silencio)' $tiro
+
+  # --- Los items de acento declaran el color UNA vez, en hex, y sin Regs de color ---
+  $malAcento = @()
+  foreach ($it in $PersonalizacionCatalog) {
+    if (-not $it.Accent) { continue }
+    try { [void](ConvertTo-AccentDwords $it.Accent) } catch { $malAcento += "$($it.Key): $($_.Exception.Message)" }
+    if ($it.Regs) { $malAcento += "$($it.Key) tiene Regs: el color lo aplica el .theme, no valores sueltos" }
+  }
+  Chk 'los acentos del catalogo son hex validos y sin Regs' ($malAcento.Count -eq 0) ("-> " + ($malAcento -join '; '))
+  # Y que no vuelva a aparecer un DWORD de color escrito a mano en el catalogo.
+  $litsColor = @(Select-String -Path (Join-Path $root 'config\personalizacion.ps1') `
+                               -Pattern '0x[0-9A-Fa-f]{8}' -AllMatches)
+  Chk 'el catalogo no tiene literales de color de 8 digitos' ($litsColor.Count -eq 0) `
+      ("-> lineas: " + (($litsColor | ForEach-Object { $_.LineNumber }) -join ', '))
+
+  # ==========================================================================
+  #  REGRESION: matar explorer en el primer login deja el escritorio SIN SHELL.
+  #  Es el issue #329 de cschneegans/unattend-generator, y teniamos el mismo
+  #  codigo: Stop-Process explorer + Start-Sleep + un if. En el primer login el
+  #  shell NO respawnea solo, y el usuario se queda con una pantalla gris.
+  #  Se mide la CLASE: si aparece un Stop-Process de explorer, TIENE que haber un
+  #  bucle de relanzamiento en el mismo archivo.
+  # ==========================================================================
+  $f10 = Get-Content (Join-Path $root 'scripts\10-personalizar.ps1') -Raw
+  $mata    = $f10 -match "Stop-Process[^\r\n]*explorer"
+  $relanza = $f10 -match "(?s)Stop-Process[^\r\n]*explorer.{0,600}?(for|while)\s*\("
+  Chk 'si la fase 10 mata explorer, tiene bucle de relanzamiento' `
+      ((-not $mata) -or $relanza) '-> mata explorer sin garantizar que vuelva (issue #329)'
+  Chk 'la fase 10 refresca con el broadcast ImmersiveColorSet' ($f10 -match 'ImmersiveColorSet')
+
+  # ==========================================================================
+  #  El .theme y el InstallTheme: la causa raiz de "el OOBE pisa el tema".
+  #  Windows aplica el tema que dice HKLM\...\Themes\InstallTheme al crear el
+  #  perfil, DESPUES de heredar NTUSER.DAT. Si InstallTheme no queda escrito en
+  #  las DOS ramas, por la que falte vuelve el aero.theme (Light + azul) y el bug
+  #  es SILENCIOSO.
+  # ==========================================================================
+  Chk 'la fase 10 escribe InstallTheme'      ($f10 -match '/v\s+InstallTheme')
+  Chk 'la fase 10 escribe InstallThemeLight' ($f10 -match '/v\s+InstallThemeLight')
+  Chk 'la fase 10 cubre la rama WOW6432Node' ($f10 -match 'WOW6432Node')
+  # Y el .theme generado tiene que ser un .theme de verdad. Se pide a la funcion real.
+  . (Join-Path $root 'scripts\10-personalizar.ps1')
+  if (Get-Command New-LunaticOSTheme -ErrorAction SilentlyContinue) {
+    $th = New-LunaticOSTheme -Mode 'Dark' -ThemeColor $c.ThemeColor -WallpaperName 'x.jpg'
+    Chk '.theme: seccion [Theme]'        ($th -match '(?m)^\[Theme\]')
+    Chk '.theme: seccion [VisualStyles]' ($th -match '(?m)^\[VisualStyles\]')
+    # El \r? del final NO es decorativo: el .theme se escribe con CRLF (es lo que
+    # usan los .theme de Windows), y en .NET el '$' de multiline matchea ANTES del
+    # \n pero DESPUES del \r, asi que '^SystemMode=Dark$' no matchea nunca sobre
+    # CRLF. Sin el \r? estos dos tests fallan con el .theme perfectamente bien.
+    Chk '.theme: SystemMode y AppMode en Dark|Light' `
+        (($th -match '(?m)^SystemMode=(Dark|Light)\r?$') -and ($th -match '(?m)^AppMode=(Dark|Light)\r?$'))
+    Chk '.theme: ColorizationColor con formato 0X + 8 hex' ($th -match '(?m)^ColorizationColor=0X[0-9A-F]{8}\r?$')
+    Chk '.theme: el color es el pedido (ARGB)' ($th -match [regex]::Escape("ColorizationColor=$($c.ThemeColor)"))
+    Chk '.theme: es ASCII puro' (([regex]::Matches($th, '[^\x00-\x7F]')).Count -eq 0)
+    # Sin tema, sin color y sin wallpaper NO se genera nada: no hay que tocar
+    # InstallTheme para no romper el default de Windows sin motivo.
+    Chk '.theme: sin nada elegido no se genera' ($null -eq (New-LunaticOSTheme))
+  } else {
+    Chk 'la fase 10 expone New-LunaticOSTheme para poder testearla' $false
+  }
+
+  # ==========================================================================
+  #  NINGUNA fase escribe lo que bloquea Settings (contrato, seccion 5.1).
+  #  Se mide la CLASE, no la lista: cualquier policy bajo una rama Personalization
+  #  o con nombre NoDisp*/NoChanging*/NoThemes* deja al usuario sin poder cambiar
+  #  su propia PC, que es exactamente lo contrario del objetivo del proyecto.
+  # ==========================================================================
+  $bloqueantes = @()
+  $archivos = @(Get-ChildItem (Join-Path $root 'scripts') -Filter '*.ps1' -File) +
+              @(Get-ChildItem (Join-Path $root 'config')  -Filter '*.ps1' -File)
+  foreach ($a in $archivos) {
+    # test-vm.ps1 y 10-personalizar.ps1 las NOMBRAN a proposito: una para auditarlas
+    # y la otra para BORRARLAS. Lo que se busca es escritura: 'reg add ... /v NoX'.
+    $txt = Get-Content $a.FullName -Raw
+    foreach ($m in [regex]::Matches($txt, '(?m)add\s+"?[^"\r\n]*?(Policies\\Microsoft\\Windows\\Personalization|PersonalizationCSP)[^"\r\n]*"?')) {
+      $bloqueantes += "$($a.Name): $($m.Value.Trim())"
+    }
+    foreach ($m in [regex]::Matches($txt, '(?m)add\s+[^\r\n]*?/v\s+(NoDispCPL|NoDispAppearancePage|NoDispBackgroundPage|NoColorChoice|NoThemesTab|SetVisualStyle|NoChangingWallpaper|NoChangingWallPaper)\b')) {
+      $bloqueantes += "$($a.Name): $($m.Value.Trim())"
+    }
+  }
+  Chk 'ninguna fase escribe policies que bloqueen Personalization' ($bloqueantes.Count -eq 0) `
+      ("-> " + ($bloqueantes -join ' | '))
+  Chk 'la fase 10 BORRA las policies bloqueantes de la imagen' `
+      ($f10 -match 'PersonalizationCSP' -and $f10 -match 'delete')
+
+  # ==========================================================================
+  #  Las policies de privacidad estan partidas: las que ensucian Settings son opt-in.
+  # ==========================================================================
+  . (Join-Path $root 'scripts\03-privacy-policies.ps1')
+  if (Get-Command Get-PrivacyPolicies -ErrorAction SilentlyContinue) {
+    $sinB = @(Get-PrivacyPolicies -BlockCloudContent $false -DisableLocation $false)
+    $conB = @(Get-PrivacyPolicies -BlockCloudContent $true  -DisableLocation $false)
+    Chk 'sin BlockCloudContent no se escribe ninguna policy de CloudContent' `
+        (@($sinB | Where-Object { $_.k -like '*CloudContent*' }).Count -eq 0)
+    Chk 'con BlockCloudContent se escriben las 3 de CloudContent' `
+        (@($conB | Where-Object { $_.k -like '*CloudContent*' }).Count -eq 3)
+    # Un flag que no se consulta promete control y miente: DisableLocation se
+    # escribia SIEMPRE, incluso desmarcado, y bloqueaba el panel de Ubicacion.
+    Chk 'DisableLocation respeta su flag (no se escribe si esta desmarcado)' `
+        (@($sinB | Where-Object { $_.v -eq 'DisableLocation' }).Count -eq 0)
+    Chk 'DisableLocation se escribe cuando SI esta marcado' `
+        (@(Get-PrivacyPolicies -DisableLocation $true | Where-Object { $_.v -eq 'DisableLocation' }).Count -eq 1)
+    # El flag tiene que existir en la TUI, o nadie puede activarlo nunca.
+    Chk 'el flag BlockCloudContent existe en el catalogo de la TUI' `
+        (@(Build-FlagCatalog | Where-Object Key -eq 'BlockCloudContent').Count -eq 1)
+  } else {
+    Chk 'la fase 03 expone Get-PrivacyPolicies para poder testearla' $false
+  }
+
+  # ==========================================================================
+  #  Los .ps1 tienen que ser ASCII puro: PowerShell 5.1 lee los .ps1 sin BOM como
+  #  ANSI, y cualquier caracter no-ASCII sale como basura en la consola. En un
+  #  comentario es cosmetico; en un string que se imprime, lo ve el usuario.
+  # ==========================================================================
+  $noAscii = @()
+  $todos = @($archivos) + @(Get-Item (Join-Path $root 'LunaticOS.ps1')) +
+           @(Get-ChildItem (Join-Path $root 'herramientas') -Filter '*.ps1' -File -EA SilentlyContinue)
+  foreach ($a in $todos) {
+    $n = ([regex]::Matches((Get-Content $a.FullName -Raw), '[^\x00-\x7F]')).Count
+    if ($n -gt 0) { $noAscii += "$($a.Name) ($n)" }
+  }
+  Chk 'todos los .ps1 son ASCII puro' ($noAscii.Count -eq 0) ("-> " + ($noAscii -join ', '))
   # El test NO busca la firma exacta de un bug conocido, busca EL PATRON: cualquier
   # cast de $r.d a [int]. La version anterior buscaba solo '[string][int]$r.d' y se
   # le escapo un segundo '[int]$r.d' cinco lineas mas abajo, en el generador del

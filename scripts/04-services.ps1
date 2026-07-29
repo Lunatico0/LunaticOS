@@ -1,9 +1,9 @@
 #requires -Version 5.1
 <#
-  Fase 4 — Servicios a Disabled (SYSTEM hive, offline).
+  Fase 4 -- Servicios a Disabled (SYSTEM hive, offline).
     Edita ControlSet001\Services\<svc>\Start = 4 (disabled) para los servicios de $ServicesDisable.
     Blindaje: si el servicio NO existe en la imagen, se saltea (no crea fantasmas).
-    Solo servicios "seguros" del plan — NO toca red/cripto/audio/update/seguridad/anticheat.
+    Solo servicios "seguros" del plan -- NO toca red/cripto/audio/update/seguridad/anticheat.
 
   Start: 0=boot 1=system 2=automatic 3=manual 4=disabled
 

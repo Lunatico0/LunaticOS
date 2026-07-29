@@ -1,6 +1,6 @@
 #requires -Version 5.1
 <#
-  apps.ps1 — Catalogo de programas que LunaticOS puede instalar en el primer arranque.
+  apps.ps1 -- Catalogo de programas que LunaticOS puede instalar en el primer arranque.
 
   TODOS los IDs de winget de este archivo fueron VERIFICADOS con
   `winget show --id <id> --exact` en 25H2 (2026-07-28). No estan puestos de memoria:

@@ -1,0 +1,31 @@
+# ============================================================================
+#  clave-windows.txt  --  TU clave de Windows 11 Pro
+#
+#  COMO USARLO
+#    1. Copia este archivo como  clave-windows.txt  (sin el .ejemplo)
+#    2. Pone tu clave en una linea, sola, con este formato:
+#           XXXXX-XXXXX-XXXXX-XXXXX-XXXXX
+#    3. Genera la ISO. La clave se inyecta en el autounattend al armar la ISO.
+#
+#  POR QUE CONVIENE PONERLA
+#    La clave generica publica de Pro fija la edicion pero NO ACTIVA Windows.
+#    Y sin activacion, Settings > Personalization queda BLOQUEADA: tema, color y
+#    fondo aparecen en gris. No es un bug del debloat, Windows lo bloquea por
+#    licenciamiento y no hay policy ni truco de registro que lo evite.
+#    Con tu clave aca, Windows se activa solo (necesita internet en algun
+#    momento) y la personalizacion queda desbloqueada.
+#
+#  ES OPCIONAL
+#    Si no creas el archivo, la ISO se genera igual con la clave generica y el
+#    build te avisa en amarillo que Personalization va a estar bloqueada.
+#    Tambien podes activar a mano despues de instalar.
+#
+#  TU LICENCIA NO VIAJA CON EL PROYECTO
+#    clave-windows.txt esta en .gitignore, y la clave NUNCA se escribe en
+#    perfil.json. El perfil es para compartir; tu licencia no. En los logs del
+#    build la clave sale enmascarada (*****-*****-*****-*****-3V66T).
+#
+#  SI TU PC YA TIENE LICENCIA DIGITAL
+#    Si la mother tiene una licencia digital vinculada (o esta en tu cuenta de
+#    Microsoft), Windows se activa solo al instalar y no necesitas este archivo.
+# ============================================================================
