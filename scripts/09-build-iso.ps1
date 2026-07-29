@@ -45,7 +45,50 @@ if (-not (Test-Path $etfs) -or -not (Test-Path $efi)) {
 }
 Write-Step "boot UEFI CON prompt (efisys.bin) - apreta una tecla al bootear del USB" 'DarkGray'
 $bootdata = "2#p0,e,b$etfs#pEF,e,b$efi"
-if (Test-Path $outIso) { Remove-Item $outIso -Force }
+
+# --------------------------------------------------------------------------
+#  Liberar la ISO antes de sobreescribirla
+# --------------------------------------------------------------------------
+# oscdimg no puede reemplazar un archivo que otro proceso tiene abierto, y falla
+# con "ERROR: Could not delete existing file / Error 32: The process cannot access
+# the file because it is being used by another process". Nos paso al final de un
+# build de 45 minutos: la VM de prueba tenia la ISO en su lector de DVD.
+#
+# Se DETECTA y se AVISA, pero NO se apaga la VM sola: podria ser una VM con trabajo
+# del usuario adentro. Apagar algo ajeno para desbloquear un archivo es exactamente
+# el tipo de "ayuda" que arruina la tarde de alguien.
+if (Get-Command Get-VM -ErrorAction SilentlyContinue) {
+  $enUso = @()
+  foreach ($vm in (Get-VM -ErrorAction SilentlyContinue)) {
+    $dvds = Get-VMDvdDrive -VMName $vm.Name -ErrorAction SilentlyContinue |
+              Where-Object { $_.Path -eq $outIso }
+    if ($dvds -and $vm.State -ne 'Off') { $enUso += $vm.Name }
+  }
+  if ($enUso) {
+    Write-Host "ERROR: la ISO esta montada en el DVD de una VM ENCENDIDA:" -ForegroundColor Red
+    $enUso | ForEach-Object { Write-Host "         $_" -ForegroundColor Yellow }
+    Write-Host "       Mientras siga encendida, oscdimg no puede sobreescribir el archivo." -ForegroundColor Yellow
+    Write-Host "       Apagala y volve a correr esta fase (el WIM ya quedo commiteado," -ForegroundColor Yellow
+    Write-Host "       asi que NO se repite el export):" -ForegroundColor Yellow
+    $enUso | ForEach-Object { Write-Host "         Stop-VM -Name '$_' -Force" -ForegroundColor White }
+    Write-Host "         .\09-build-iso.ps1" -ForegroundColor White
+    exit 1
+  }
+}
+
+# Guarda extra: si el archivo sigue tomado por cualquier otro proceso (Explorer con
+# la ISO montada, un antivirus escaneandola), avisar ANTES de que oscdimg falle.
+if (Test-Path $outIso) {
+  try {
+    $fs = [System.IO.File]::Open($outIso, 'Open', 'ReadWrite', 'None'); $fs.Close()
+  } catch {
+    Write-Host "ERROR: no puedo escribir sobre $outIso" -ForegroundColor Red
+    Write-Host "       Algo la tiene abierta. Si la montaste en el Explorador, expulsala:" -ForegroundColor Yellow
+    Write-Host "         Dismount-DiskImage -ImagePath '$outIso'" -ForegroundColor White
+    exit 1
+  }
+  Remove-Item $outIso -Force
+}
 Write-Step "armando ISO booteable con oscdimg..."
 & $oscdimg -m -o -u2 -udfver102 "-bootdata:$bootdata" $build $outIso
 if ($LASTEXITCODE -ne 0) { Write-Host "ERROR oscdimg ($LASTEXITCODE)" -ForegroundColor Red; exit 1 }

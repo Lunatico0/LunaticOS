@@ -48,28 +48,97 @@
     .\test-vm.ps1 -Reset -Boot # el flujo tipico -> despues UN clic en "Next"
 #>
 param(
+  [switch]$Create,              # crea la VM desde cero (Gen2 + TPM + Secure Boot)
   [switch]$Reset,
   [switch]$Boot,
   [switch]$Shot,
   [switch]$Verify,
   [switch]$Enter,               # manda UN Enter. OJO: NO funciona en el setup (ver header)
-  [string]$VMName  = 'Debloat-Test',
+  [switch]$Destroy,             # borra la VM y su VHDX
+  [string]$VMName  = 'LunaticOS-Test',
+  [int]$RamGB      = 6,
+  [int]$Cpus       = 4,
+  [int]$DiskGB     = 64,
   [int]$KeySeconds = 25         # cuanto tiempo mandar Enter para pasar el prompt de boot
 )
 
 . "$PSScriptRoot\config.ps1"
 
 $iso  = Join-Path $CFG.Root 'work\Win11_25H2_Pro_debloat.iso'
-$vhdx = Join-Path $CFG.Root 'work\test-vm.vhdx'
+# El VHDX lleva el nombre de la VM: si no, dos VMs de test se pelean por el mismo
+# archivo y -Reset de una te borra el disco de la otra.
+$vhdx = Join-Path $CFG.Root "work\$VMName.vhdx"
 $ns   = 'root\virtualization\v2'
 
 function Get-VmCim {
   Get-CimInstance -Namespace $ns -ClassName Msvm_ComputerSystem -Filter "ElementName='$VMName'"
 }
 
-if (-not ($Reset -or $Boot -or $Shot -or $Verify -or $Enter)) {
-  Write-Host "Nada que hacer. Usa -Reset / -Boot / -Enter / -Shot / -Verify (ver el header)." -ForegroundColor Yellow
+if (-not ($Create -or $Reset -or $Boot -or $Shot -or $Verify -or $Enter -or $Destroy)) {
+  Write-Host "Nada que hacer. Usa -Create / -Reset / -Boot / -Enter / -Shot / -Verify / -Destroy" -ForegroundColor Yellow
+  Write-Host "Flujo tipico:  .\test-vm.ps1 -Create -Boot   ->  un clic en Next  ->  -Shot  ->  -Verify" -ForegroundColor DarkGray
   return
+}
+
+# --------------------------------------------------------------------------
+# DESTROY: borrar la VM y su disco
+# --------------------------------------------------------------------------
+if ($Destroy) {
+  $vm = Get-VM -Name $VMName -ErrorAction SilentlyContinue
+  if ($vm) {
+    if ($vm.State -ne 'Off') { Stop-VM -Name $VMName -TurnOff -Force; Start-Sleep -Seconds 3 }
+    Remove-VM -Name $VMName -Force
+    Write-Host "  VM $VMName borrada" -ForegroundColor Green
+  } else { Write-Host "  (no existe la VM $VMName)" -ForegroundColor DarkGray }
+  if (Test-Path $vhdx) { Remove-Item $vhdx -Force; Write-Host "  VHDX borrado" -ForegroundColor Green }
+  return
+}
+
+# --------------------------------------------------------------------------
+# CREATE: VM nueva, Gen2, con TPM 2.0 y Secure Boot
+# --------------------------------------------------------------------------
+if ($Create) {
+  Write-Host "== Creando la VM $VMName ==" -ForegroundColor Cyan
+  if (-not (Get-Command Get-VM -ErrorAction SilentlyContinue)) {
+    Write-Host "ERROR: no esta el modulo de Hyper-V. Activalo con:" -ForegroundColor Red
+    Write-Host "  Enable-WindowsOptionalFeature -Online -FeatureName Microsoft-Hyper-V -All" -ForegroundColor Yellow
+    exit 1
+  }
+  if (Get-VM -Name $VMName -ErrorAction SilentlyContinue) {
+    Write-Host "  la VM ya existe -> uso -Reset para dejarla en cero" -ForegroundColor Yellow
+  } else {
+    if (Test-Path $vhdx) { Remove-Item $vhdx -Force }
+    New-Item -ItemType Directory -Force -Path (Split-Path $vhdx) | Out-Null
+
+    # GENERACION 2 obligatoria: Gen1 no tiene UEFI, y sin UEFI no hay Secure Boot
+    # ni TPM. Windows 11 no instala, y Vanguard tampoco arranca (regla D5).
+    New-VM -Name $VMName -Generation 2 -MemoryStartupBytes ($RamGB * 1GB) `
+           -NewVHDPath $vhdx -NewVHDSizeBytes ($DiskGB * 1GB) | Out-Null
+    Set-VM -Name $VMName -ProcessorCount $Cpus -AutomaticCheckpointsEnabled $false
+    Write-Host "  VM creada: Gen2, $RamGB GB RAM, $Cpus vCPU, VHDX $DiskGB GB dinamico" -ForegroundColor Green
+
+    # Red: el Default Switch da internet por NAT sin configurar nada. Hace falta,
+    # porque los programas se instalan por winget en el primer arranque.
+    $sw = Get-VMSwitch -Name 'Default Switch' -ErrorAction SilentlyContinue
+    if ($sw) { Connect-VMNetworkAdapter -VMName $VMName -SwitchName 'Default Switch'; Write-Host "  red: Default Switch (NAT con internet)" -ForegroundColor Green }
+    else     { Write-Host "  ! sin 'Default Switch': la VM va a quedar sin internet y winget no va a poder instalar nada" -ForegroundColor Yellow }
+  }
+
+  # Secure Boot + TPM: sin esto el test NO representa a la maquina real.
+  Set-VMFirmware -VMName $VMName -EnableSecureBoot On -SecureBootTemplate MicrosoftWindows
+  try {
+    $sec = Get-VMSecurity -VMName $VMName
+    if (-not $sec.TpmEnabled) {
+      if (-not $sec.KeyProtector -or $sec.KeyProtector.Length -le 4) {
+        Set-VMKeyProtector -VMName $VMName -NewLocalKeyProtector
+      }
+      Enable-VMTPM -VMName $VMName
+    }
+  } catch { Write-Host "  ! no pude habilitar TPM: $($_.Exception.Message)" -ForegroundColor Yellow }
+
+  $fw = Get-VMFirmware -VMName $VMName; $sec = Get-VMSecurity -VMName $VMName
+  Write-Host "  SecureBoot=$($fw.SecureBoot)  TPM=$($sec.TpmEnabled)" -ForegroundColor Green
+  if (-not $Reset) { $Reset = $true }   # recien creada: hay que ponerle la ISO igual
 }
 
 # --------------------------------------------------------------------------
