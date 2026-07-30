@@ -11,7 +11,7 @@
 
 | Capa | Hoy |
 |---|---|
-| Logica sin UI (catalogos, perfil, clases de bug) | `LunaticOS.ps1 -SelfTest`: 111 tests, probados por mutacion |
+| Logica sin UI (catalogos, perfil, clases de bug) | `LunaticOS.ps1 -SelfTest`: 119 tests, probados por mutacion |
 | **La TUI** | **NADA.** Es el primer contacto del usuario y no se prueba |
 | Pipeline -> ISO | Solo se ve si el build no explota |
 | **Instalacion** | **Requiere un clic humano** -> imposible automatizar |

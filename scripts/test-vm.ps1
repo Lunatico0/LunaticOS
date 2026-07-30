@@ -60,7 +60,11 @@ param(
   [int]$RamGB      = 6,
   [int]$Cpus       = 4,
   [int]$DiskGB     = 64,
-  [int]$KeySeconds = 25         # cuanto tiempo mandar Enter para pasar el prompt de boot
+  [int]$KeySeconds = 25,        # cuanto tiempo mandar Enter para pasar el prompt de boot
+  # Perfil contra el cual compara el -Verify. Vacio = <repo>\perfil.json, el del
+  # usuario. El runner del E2E pasa el perfil de test por aca en vez de pisar el
+  # archivo del usuario y restaurarlo despues.
+  [string]$ProfilePath = ''
 )
 
 . "$PSScriptRoot\config.ps1"
@@ -958,18 +962,59 @@ function Get-VerifyRequestedColorPrevalence {
   return $false
 }
 
-# Imprime un finding con el color que le corresponde al nivel.
+# ===========================================================================
+#  Imprime un finding con el color que le corresponde al nivel, Y LO CUENTA.
+#
+#  POR QUE SE CUENTAN: sin esto, el -Verify imprimia todo y salia con 0 SIEMPRE,
+#  incluso con FALLA en pantalla. Cualquier automatizacion que lo invoque tiene que
+#  PARSEAR TEXTO para saber si paso, y un veredicto que depende de un regexp sobre
+#  la salida se rompe EN SILENCIO el dia que alguien reformatea un mensaje.
+#  Un instrumento que no puede reportar su propio resultado a un exit code no sirve
+#  para un runner desatendido -- y este proyecto ya perdio dos sesiones por
+#  instrumentos que mentian.
+# ===========================================================================
+$script:FindingCount = @{ OK = 0; FALLA = 0; SOSPECHA = 0; OJO = 0; 'SIN MEDIR' = 0; info = 0 }
+
 function Write-Finding {
   param($Finding)
   $lvl = "$($Finding.Level)"
   $color = switch ($lvl) {
-    'OK'       { 'Green' }
-    'FALLA'    { 'Red' }
-    'SOSPECHA' { 'Magenta' }
-    'OJO'      { 'Yellow' }
-    default    { 'DarkGray' }
+    'OK'        { 'Green' }
+    'FALLA'     { 'Red' }
+    'SOSPECHA'  { 'Magenta' }
+    'OJO'       { 'Yellow' }
+    'SIN MEDIR' { 'Yellow' }
+    default     { 'DarkGray' }
   }
+  if ($script:FindingCount.ContainsKey($lvl)) { $script:FindingCount[$lvl]++ }
+  else { $script:FindingCount[$lvl] = 1 }
   Write-Host ("  {0,-9} {1}" -f $lvl, $Finding.Text) -ForegroundColor $color
+}
+
+# Veredicto del -Verify a partir de lo que se conto. Devuelve el exit code.
+#   0 = nada roto        1 = hay FALLA
+#   8 = no hay FALLA pero quedo algo SIN MEDIR: no se puede afirmar que pasa
+function Get-VerifyExitCode {
+  $c = $script:FindingCount
+  Write-Host ''
+  Write-Host ("  RESUMEN: OK={0}  FALLA={1}  SOSPECHA={2}  OJO={3}  SIN MEDIR={4}" -f `
+              $c['OK'], $c['FALLA'], $c['SOSPECHA'], $c['OJO'], $c['SIN MEDIR']) -ForegroundColor White
+  if ($c['FALLA'] -gt 0) {
+    Write-Host "  VEREDICTO: FALLA" -ForegroundColor Red
+    return 1
+  }
+  if ($c['SIN MEDIR'] -gt 0) {
+    # No es lo mismo "esta bien" que "no lo pude ver". Redondear para arriba es
+    # exactamente como se cuela un bug: el veredicto tiene que decir la verdad.
+    Write-Host "  VEREDICTO: INCOMPLETO (quedo algo sin medir)" -ForegroundColor Yellow
+    return 8
+  }
+  if ($c['SOSPECHA'] -gt 0) {
+    Write-Host "  VEREDICTO: PASA, con sospechas de la misma CLASE de un bug conocido" -ForegroundColor Magenta
+    return 0
+  }
+  Write-Host "  VEREDICTO: PASA" -ForegroundColor Green
+  return 0
 }
 
 # ---------------------------------------------------------------------------
@@ -1076,9 +1121,20 @@ if ($Reset) {
   # VHDX desde cero: una instalacion sobre restos de la anterior no prueba nada.
   Get-VMHardDiskDrive -VMName $VMName | Remove-VMHardDiskDrive
   if (Test-Path $vhdx) { Remove-Item $vhdx -Force; Write-Host "  VHDX viejo borrado" }
-  New-VHD -Path $vhdx -SizeBytes 64GB -Dynamic | Out-Null
+  # $DiskGB y no 64GB hardcodeado: el parametro existia y esta linea lo IGNORABA,
+  # asi que -DiskGB 100 daba un disco de 64 sin decir nada. Un parametro que no se
+  # consulta miente sobre lo que la herramienta hace.
+  # OJO con el minimo: el layout de autounattend-test.xml reserva 1306 MB fijos
+  # (WinRE 990 + ESP 300 + MSR 16) antes de la particion de Windows, asi que un
+  # disco muy chico hace fallar el setup de una forma dificil de diagnosticar.
+  if ($DiskGB -lt 24) {
+    Write-Host "ERROR: -DiskGB $DiskGB es muy chico. Windows 11 pide 64 GB y el layout" -ForegroundColor Red
+    Write-Host "       de test reserva 1.3 GB antes de C:. Minimo razonable: 24." -ForegroundColor Red
+    exit 1
+  }
+  New-VHD -Path $vhdx -SizeBytes ($DiskGB * 1GB) -Dynamic | Out-Null
   Add-VMHardDiskDrive -VMName $VMName -Path $vhdx
-  Write-Host "  VHDX nuevo: 64 GB dinamico" -ForegroundColor Green
+  Write-Host "  VHDX nuevo: $DiskGB GB dinamico" -ForegroundColor Green
 
   # DVD con la ISO recien generada
   if (-not (Get-VMDvdDrive -VMName $VMName)) { Add-VMDvdDrive -VMName $VMName }
@@ -1310,7 +1366,11 @@ if ($Verify) {
     # Esto es lo que distingue "Windows lo ignoro" de "nuestro script no lo escribio".
     # Sin este chequeo, un tema que no se aplica es indistinguible de un bug propio.
     Write-Host "`n--- PERSONALIZACION: perfil vs hive del usuario ---" -ForegroundColor Cyan
-    $perfilPath = Join-Path $CFG.Root 'perfil.json'
+    # -ProfilePath permite comparar contra OTRO perfil que el del usuario. Sin esto,
+    # el runner del E2E tenia que PISAR <repo>\perfil.json con el de test y
+    # restaurarlo desde un finally: si el proceso muere en el medio, el usuario
+    # pierde su seleccion y no se entera hasta el proximo build.
+    $perfilPath = if ($ProfilePath) { $ProfilePath } else { Join-Path $CFG.Root 'perfil.json' }
     $pers = $null
     if (Test-Path $perfilPath) {
       try { $pers = (Get-Content $perfilPath -Raw | ConvertFrom-Json).personalizacion } catch { }
@@ -1794,4 +1854,8 @@ if ($Verify) {
     Dismount-DiskImage -ImagePath $vhdx | Out-Null
     Write-Host "`nVHDX desmontado." -ForegroundColor DarkGray
   }
+
+  # El exit code va DESPUES del finally: si el VHDX no se desmonta, queda tomado y
+  # el proximo -Reset falla. Primero limpiar, despues opinar.
+  exit (Get-VerifyExitCode)
 }
