@@ -236,3 +236,69 @@ $Global:FeaturesDisable = @(
   'WindowsMediaPlayer'   # app WMP legacy. NO tocar 'MediaPlayback' (motor de reproduccion)
   'WorkFolders-Client'   # Work Folders
 )
+
+# ===========================================================================
+#  CUENTA DE LA VM DE TEST (solo para el E2E)
+#
+#  La crea config\autounattend-test.xml, que es SOLO PARA TEST EN VM y FORMATEA EL
+#  DISCO 0 SIN PREGUNTAR. Nada de esto se usa en produccion: el autounattend de
+#  produccion crea la cuenta con password VACIO a proposito.
+#
+#  POR QUE SE LEE DEL XML Y NO HAY UNA CONSTANTE ESCRITA ACA:
+#  el password tiene que ser EXACTAMENTE el que el instalador le puso a la cuenta.
+#  Una copia en este archivo (o en un .psd1) seria una SEGUNDA fuente de verdad, y
+#  dos fuentes de verdad se desincronizan: alguien edita el XML, nadie se acuerda
+#  de la copia, y el sintoma aparece 35 minutos despues como "PowerShell Direct no
+#  conecta" o "la VM quedo en la pantalla de login". Ese sintoma no se parece en
+#  nada a la causa, que es la peor clase de bug que tiene este repo. Leyendo del
+#  XML, el problema no puede existir.
+#
+#  Consumidores previstos (scripts\test-e2e.ps1, scripts\verify-live.ps1):
+#
+#    . "$PSScriptRoot\config.ps1"
+#    $c = Get-TestVmAccount
+#    scripts\verify-live.ps1 -VMName 'LunaticOS-Test' -User $c.User -Password $c.Password
+#
+#  NO IMPRIMAS $c.Password EN NINGUN LOG. Es un secreto que no protege nada (vive
+#  en una VM descartable y esta versionado a proposito), pero los logs de
+#  work\logs\ se comparten para diagnosticar, y un password en un log ensena que
+#  esta bien poner passwords en los logs.
+# ===========================================================================
+$Global:TestUnattendPath = Join-Path $root 'config\autounattend-test.xml'
+
+function Get-TestVmAccount {
+  param([string]$Path = $Global:TestUnattendPath)
+
+  if (-not (Test-Path $Path)) {
+    throw "No existe $Path. Sin ese archivo no hay VM de test: es el que crea la cuenta con password."
+  }
+  $doc = New-Object System.Xml.XmlDocument
+  $doc.Load((Resolve-Path $Path).Path)
+
+  # local-name() en todos los pasos: el unattend declara un namespace por defecto
+  # (urn:schemas-microsoft-com:unattend) y un XPath sin local-name() NO encuentra
+  # nada. Y no falla ruidoso: devuelve $null.
+  $la = $doc.SelectSingleNode(
+    "//*[local-name()='UserAccounts']/*[local-name()='LocalAccounts']/*[local-name()='LocalAccount']")
+  if (-not $la) { throw "$Path no crea ninguna LocalAccount." }
+
+  $nUser = $la.SelectSingleNode("*[local-name()='Name']")
+  $nPass = $la.SelectSingleNode("*[local-name()='Password']/*[local-name()='Value']")
+  $u  = if ($nUser) { "$($nUser.InnerText)".Trim() } else { '' }
+  $pw = if ($nPass) { "$($nPass.InnerText)" }        else { '' }
+
+  if ($u -eq '' -or $pw -eq '') {
+    throw ("$Path no tiene usuario o password usable (leido: usuario '$u', password " +
+           "de $($pw.Length) caracteres). PowerShell Direct NO funciona con password vacio.")
+  }
+
+  # Credential armada aca para que el consumidor no tenga que repetir el
+  # ConvertTo-SecureString. Si el guest rechaza el usuario pelado, probar ".\$u":
+  # PowerShell Direct a veces necesita el dominio local explicito.
+  $sec = ConvertTo-SecureString $pw -AsPlainText -Force
+  @{
+    User       = $u
+    Password   = $pw
+    Credential = New-Object System.Management.Automation.PSCredential($u, $sec)
+  }
+}

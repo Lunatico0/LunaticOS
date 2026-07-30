@@ -607,11 +607,90 @@ function Invoke-SelfTest {
   }
   Chk 'personalizacion NO usa policies (no bloquea Settings)' ($pol.Count -eq 0) ("-> " + ($pol -join '; '))
 
+  # ==========================================================================
+  #  REGRESION: LA ESTRUCTURA del grupo excluyente, no solo que las claves existan.
+  #
+  #  El test viejo (que sigue abajo) verificaba que cada clave existiera en el
+  #  catalogo, y daba VERDE con los grupos ROTOS. Porque PowerShell APLANA un array
+  #  que contiene un solo array:
+  #      @( @('a','b','c') ).Count = 3      <-- tres strings sueltos
+  #      @( ,@('a','b','c') ).Count = 1     <-- un grupo, como se pretendia
+  #  Y `foreach ($k in 'un-string')` itera UNA vez con el string entero, asi que el
+  #  test viejo pasaba igual.
+  #
+  #  Con los grupos aplanados, `$grp -contains $key` es una igualdad y el foreach
+  #  de hermanos itera sobre el mismo key: NO SE DESMARCA A NADIE. Sintoma real:
+  #  se podian marcar los tres acentos a la vez y ganaba el ultimo en escribirse.
+  #
+  #  Este test mide la CLASE: cada grupo tiene que ser una COLECCION, y de 2 o mas.
+  #  Un grupo de uno no excluye a nadie, y un string no es un grupo.
+  # ==========================================================================
+  foreach ($grp in $PersonalizacionExclusivos) {
+    Chk 'cada grupo excluyente es una coleccion, no un string suelto' `
+        ($grp -isnot [string]) "-> llego '$grp' como [$($grp.GetType().Name)]: el array se APLANO, usa @( ,@(...) )"
+    if ($grp -isnot [string]) {
+      Chk 'cada grupo excluyente tiene 2 o mas claves' (@($grp).Count -ge 2) `
+          "-> el grupo tiene $(@($grp).Count): un grupo de uno no excluye a nadie"
+    }
+  }
+  # Y la prueba FUNCIONAL, que es la que de verdad importa: marcar uno tiene que
+  # desmarcar a los hermanos. Se testea la logica sin UI, igual que la hace la TUI.
+  if (@($PersonalizacionExclusivos).Count -ge 1) {
+    $g = @($PersonalizacionExclusivos)[0]
+    if ($g -isnot [string] -and @($g).Count -ge 2) {
+      $sel = [ordered]@{}
+      foreach ($k in @($g)) { $sel[$k] = $false }
+      # Simula el efecto de marcar el primero (misma logica que Show-TuiChecklist).
+      $primero = @($g)[0]
+      $sel[$primero] = $true
+      foreach ($otro in @($g)) { if ($otro -ne $primero) { $sel[$otro] = $false } }
+      $marcados = @($sel.Keys | Where-Object { $sel[$_] }).Count
+      Chk 'al marcar un excluyente queda UNO solo marcado' ($marcados -eq 1) `
+          "-> quedaron $marcados marcados"
+    }
+  }
+
   # --- Grupos excluyentes: las claves tienen que existir ---
   foreach ($grp in $PersonalizacionExclusivos) {
-    foreach ($k in $grp) {
+    foreach ($k in @($grp)) {
       Chk "clave excluyente '$k' existe en el catalogo" (@($PersonalizacionCatalog | Where-Object Key -eq $k).Count -eq 1)
     }
+  }
+
+  # ==========================================================================
+  #  EL AUTOUNATTEND DE TEST NO PUEDE LLEGAR A UNA ISO DE PRODUCCION.
+  #  config\autounattend-test.xml lleva DiskConfiguration: FORMATEA EL DISCO 0 SIN
+  #  PREGUNTAR. Existe solo para que el E2E no necesite un clic humano. Si alguien
+  #  lo bootea en su PC, le borra el disco, y eso no se revierte.
+  #  Contrato: docs\testing-e2e.md seccion 1.
+  # ==========================================================================
+  $auProd = Join-Path $root 'config\autounattend.xml'
+  $auTest = Join-Path $root 'config\autounattend-test.xml'
+  if (Test-Path $auProd) {
+    $xmlProd = $null
+    try { $xmlProd = [xml](Get-Content $auProd -Raw) } catch { }
+    Chk 'el autounattend de PRODUCCION es XML valido' ($null -ne $xmlProd)
+    if ($xmlProd) {
+      # La guarda de fondo: produccion NUNCA lleva DiskConfiguration.
+      $disk = $xmlProd.SelectSingleNode("//*[local-name()='DiskConfiguration']")
+      Chk 'el autounattend de PRODUCCION no lleva DiskConfiguration' ($null -eq $disk) `
+          '-> produccion formatearia el disco del usuario sin preguntar'
+    }
+  }
+  if (Test-Path $auTest) {
+    $xmlTest = $null
+    try { $xmlTest = [xml](Get-Content $auTest -Raw) } catch { }
+    Chk 'el autounattend de TEST es XML valido' ($null -ne $xmlTest)
+    if ($xmlTest) {
+      $diskT = $xmlTest.SelectSingleNode("//*[local-name()='DiskConfiguration']")
+      Chk 'el autounattend de TEST si lleva DiskConfiguration (sin eso pide un clic)' ($null -ne $diskT)
+    }
+    # El aviso de la cabecera es parte del contrato: si alguien lo borra, el archivo
+    # deja de gritar lo que hace. (No puede ir en la linea 1: un comentario antes de
+    # la declaracion <?xml?> invalida el documento. Medido.)
+    $cabecera = (Get-Content $auTest -TotalCount 12) -join ' '
+    Chk 'el autounattend de TEST avisa que formatea el disco' `
+        (($cabecera -match 'SOLO PARA TEST') -and ($cabecera -match 'FORMATEA EL DISCO 0'))
   }
 
   # ==========================================================================

@@ -1,0 +1,403 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  #########################################################################
+  #                                                                       #
+  #   SOLO PARA TEST EN VM. FORMATEA EL DISCO 0 SIN PREGUNTAR.            #
+  #                                                                       #
+  #   Limpia el disco 0 COMPLETO y lo reparticiona: se lleva particiones, #
+  #   datos y todo lo que hubiera adentro. NO pide confirmacion, NO       #
+  #   muestra UI, NO tiene vuelta atras. Es irreversible.                 #
+  #                                                                       #
+  #   NO lo copies sobre config\autounattend.xml.                         #
+  #   NO grabes a un USB ni a un disco real una ISO armada con este       #
+  #   archivo: la primera vez que bootee, borra ese disco.                #
+  #                                                                       #
+  #########################################################################
+
+  POR QUE EL AVISO ARRANCA EN LA LINEA 2 Y NO EN LA 1:
+  la declaracion <?xml ?> TIENE que ser el primer nodo del documento. Con un
+  comentario delante, System.Xml.XmlDocument.Load() tira
+
+    Unexpected XML declaration. The XML declaration must be the first node in
+    the document, and no white space characters are allowed to appear before it.
+
+  y la guarda de scripts\08-inject-runtime.ps1 rechazaria el archivo antes de
+  armar la ISO. Medido, no supuesto. La otra salida era borrar la declaracion,
+  pero el archivo de produccion la tiene y esta probado: no se toca lo que
+  funciona en un archivo cuyo modo de fallar es "el setup lo descarta en
+  silencio".
+
+  ===========================================================================
+  POR QUE EXISTE ESTE ARCHIVO APARTE DEL DE PRODUCCION
+
+  Dos motivos, los dos medidos:
+
+  1) EL CLIC HUMANO. Sin DiskConfiguration, el setup de Windows 11 se para en
+     "Select location to install Windows 11" y espera un clic. El teclado
+     sintetico de Hyper-V (Msvm_Keyboard, root\virtualization\v2) NO llega al
+     setup: 5 intentos, todos con ReturnValue=0 y CERO efecto. ReturnValue=0
+     miente. En el firmware UEFI si funciona; en WinPE no. Automatizar el clic
+     esta descartado: la solucion es que la pantalla no aparezca.
+
+  2) EL PASSWORD. Invoke-Command -VMName (PowerShell Direct) NO funciona con
+     password vacio, y sin PowerShell Direct no hay forma de verificar el SO
+     CORRIENDO (activacion, colores efectivos, winget, servicios, Explorer
+     despues del primer login). Produccion deja el password VACIO a proposito:
+     no se hardcodea un secreto en una ISO que se reparte.
+
+  Contrato completo: docs\testing-e2e.md, secciones 1 y 3.
+
+  ===========================================================================
+  CREDENCIAL DE LA VM DE TEST (a proposito en texto plano, versionada)
+
+    usuario:  pato
+    password: LunaticOS-Test-2026
+
+  Es un secreto que no protege NADA: vive en una VM descartable que se borra al
+  final de cada corrida, y la ISO que lo lleva no se graba a ningun medio real.
+  Documentarlo aca es lo que permite que el runner y verify-live.ps1 lo usen sin
+  pedirselo a nadie.
+
+  ESTE ARCHIVO ES LA UNICA FUENTE DE VERDAD del password. No lo copies a un
+  .psd1 ni a config.ps1: dos copias de una credencial se desincronizan, y el
+  sintoma de la desincronizacion es "PowerShell Direct no conecta" DESPUES de
+  35 minutos de instalacion, que no se parece en nada a la causa. Para leerlo
+  desde PowerShell hay Get-TestVmAccount en scripts\config.ps1, que parsea ESTE
+  archivo.
+
+  OJO: AutoLogon escribe el password en texto plano en
+  HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon\DefaultPassword.
+  En una VM descartable no importa; en una maquina real seria un agujero. Otro
+  motivo por el que este archivo no sale de la VM.
+
+  ===========================================================================
+  POR QUE EXISTE EL PASS windowsPE (no lo borres):
+
+  En el primer test (2026-07-27) el archivo de produccion NO se aplico. El log
+  del setup (C:\Windows\Panther\setupact.log) mostro:
+
+    UnattendSearchExplicitPath: Found unattend file at [D:\autounattend.xml];
+      examining for applicability.
+    UnattendSearchExplicitPath: [D:\autounattend.xml] does not meet criteria
+      to be used for this unattend pass.
+    SetupHost: Unattend not found. Releasing UnattendMgr object.
+    Callback_Unattend_InitiatePass: No unattend file was present, skipping
+      unattend settings passes
+
+  El instalador SI encuentra el archivo, pero lo evalua contra el pass en curso
+  (windowsPE). Como el archivo solo tenia 'specialize' y 'oobeSystem', lo
+  considero no aplicable y lo DESCARTO ENTERO. No lo guarda para los pases
+  siguientes. Resultado: pedia product key, pedia idioma y teclado, BypassNRO
+  nunca se escribia y el UserLocale quedaba en en-US.
+
+  Un solo defecto, cuatro sintomas. Con el pass windowsPE presente el archivo
+  se acepta y los tres pases se procesan.
+  ===========================================================================
+-->
+<unattend xmlns="urn:schemas-microsoft-com:unattend">
+
+  <!-- =====================================================================
+       PASS 1: windowsPE. Lo lee el instalador al arrancar del medio.
+       Sin este pass el archivo COMPLETO se descarta (ver cabecera).
+       ===================================================================== -->
+  <settings pass="windowsPE">
+
+    <component name="Microsoft-Windows-International-Core-WinPE" processorArchitecture="amd64"
+               publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS"
+               xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State"
+               xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+      <!-- Idioma del instalador: ingles. Teclado: LatAm primario + ingles US. -->
+      <SetupUILanguage>
+        <UILanguage>en-US</UILanguage>
+      </SetupUILanguage>
+      <InputLocale>es-AR;en-US</InputLocale>
+      <SystemLocale>en-US</SystemLocale>
+      <UILanguage>en-US</UILanguage>
+      <UserLocale>es-AR</UserLocale>
+    </component>
+
+    <component name="Microsoft-Windows-Setup" processorArchitecture="amd64"
+               publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS"
+               xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State"
+               xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+
+      <!-- =================================================================
+           ESTO ES LO QUE BORRA EL DISCO. Es la unica diferencia funcional
+           importante contra config\autounattend.xml.
+
+           WillWipeDisk=true => "clean" del disco 0 entero antes de crear el
+           layout. No mira si habia algo. No pregunta.
+
+           LAYOUT GPT/UEFI, EN ESTE ORDEN FISICO:
+
+             1  Primary  990 MB    WinRE (NTFS, TypeID de recovery)
+             2  EFI      300 MB    ESP   (FAT32)
+             3  MSR       16 MB    reservada de Microsoft (sin letra, sin fmt)
+             4  Primary  Extend    Windows (NTFS, C:)   <== InstallTo apunta aca
+
+           POR QUE WinRE VA PRIMERO Y NO AL FINAL:
+           Microsoft recomienda la particion de recovery INMEDIATAMENTE DESPUES
+           de la de Windows, pero esa recomendacion es para los scripts de
+           DiskPart, que tienen "shrink". El unattend NO tiene shrink: solo la
+           ULTIMA particion puede llevar <Extend>true</Extend>. Con recovery al
+           final habria que fijar el tamano de la particion de Windows a mano
+           (por ejemplo 63000 MB), y ese numero se rompe solo el dia que el
+           VHDX de test cambie de tamano. El propio answer file de ejemplo de
+           Microsoft ("Default configuration" de UEFI/GPT) pone WinRE PRIMERO
+           por exactamente este motivo. Referencia: Sample: Configure UEFI/GPT
+           Based Hard Drive Partitions by Using Windows Setup (hh825702).
+
+           DE DONDE SALEN LOS TAMANOS (no son inventados):
+             ESP 300 MB .... el minimo que documenta Microsoft para Windows 11
+                            es 200 MB en discos 512/512e y 300 MB en 4K native
+                            (limite de FAT32: 4 KB x 65527 = 256 MB). 300
+                            cumple los dos casos y cuesta nada.
+             MSR 16 MB ..... el tamano actual de la MSR (los docs viejos decian
+                            128 MB; el setup de Windows 11 crea 16).
+             WinRE 990 MB .. Microsoft: minimo 300 MB, pero para bare metal
+                            recovery el minimo RECOMENDADO es 990 MB con 250 MB
+                            libres. winre.wim pesa 500 a 700 MB, asi que los
+                            300 MB de los ejemplos viejos ya no alcanzan: si no
+                            entra, el setup deja WinRE en C:\Recovery y esta
+                            particion queda vacia, de adorno.
+             Windows ....... Extend (todo el resto). Minimo de Windows 11: 20 GB.
+                            Overhead fijo del layout: 990+300+16 = 1306 MB, asi
+                            que el VHDX tiene que ser >= ~22 GB. test-vm.ps1 usa
+                            64 GB: sobra.
+
+           EL ORDEN DE LOS ELEMENTOS HIJOS ESTA COPIADO TAL CUAL DEL EJEMPLO DE
+           MICROSOFT. NO LO "ORDENES ALFABETICAMENTE" NI LO PROLIJEES:
+             Disk              -> DiskID, WillWipeDisk, CreatePartitions, ModifyPartitions
+             CreatePartition   -> Order, Type, Size | Extend
+             ModifyPartition   -> Order, PartitionID, Label, Letter, Format, TypeID
+             DiskConfiguration -> los Disk primero, WillShowUI AL FINAL
+           Este archivo pertenece a la familia de los que fallan con
+           "The provided unattend file is not valid; hrResult = 0x80220001" y
+           abortan la instalacion a mitad de camino (ver D15 en
+           docs\decisiones.md). No es lugar para mejoras cosmeticas.
+           ================================================================= -->
+      <DiskConfiguration>
+        <Disk wcm:action="add">
+          <DiskID>0</DiskID>
+          <WillWipeDisk>true</WillWipeDisk>
+          <CreatePartitions>
+            <!-- 1. WinRE tools -->
+            <CreatePartition wcm:action="add">
+              <Order>1</Order>
+              <Type>Primary</Type>
+              <Size>990</Size>
+            </CreatePartition>
+            <!-- 2. System partition (ESP) -->
+            <CreatePartition wcm:action="add">
+              <Order>2</Order>
+              <Type>EFI</Type>
+              <Size>300</Size>
+            </CreatePartition>
+            <!-- 3. Microsoft Reserved (MSR). No se formatea ni lleva letra. -->
+            <CreatePartition wcm:action="add">
+              <Order>3</Order>
+              <Type>MSR</Type>
+              <Size>16</Size>
+            </CreatePartition>
+            <!-- 4. Windows. Extend => se come todo el resto del disco.
+                    TIENE que ser la ULTIMA: una Extend en el medio deja sin
+                    espacio a las que vienen despues. -->
+            <CreatePartition wcm:action="add">
+              <Order>4</Order>
+              <Type>Primary</Type>
+              <Extend>true</Extend>
+            </CreatePartition>
+          </CreatePartitions>
+          <ModifyPartitions>
+            <!-- 1. WinRE. El TypeID de recovery es lo que la esconde del
+                    Explorador y lo que le dice al setup donde poner winre.wim. -->
+            <ModifyPartition wcm:action="add">
+              <Order>1</Order>
+              <PartitionID>1</PartitionID>
+              <Label>WinRE</Label>
+              <Format>NTFS</Format>
+              <TypeID>de94bba4-06d1-4d40-a16a-bfd50179d6ac</TypeID>
+            </ModifyPartition>
+            <!-- 2. ESP: FAT32 obligatorio, es de donde bootea el firmware. -->
+            <ModifyPartition wcm:action="add">
+              <Order>2</Order>
+              <PartitionID>2</PartitionID>
+              <Label>System</Label>
+              <Format>FAT32</Format>
+            </ModifyPartition>
+            <!-- La MSR NO SE PUEDE MODIFICAR (Microsoft lo dice explicito:
+                 "Microsoft Reserved (MSR) and Extended partitions cannot be
+                 modified"). Por eso NO hay un ModifyPartition para ella.
+
+                 Y de ahi sale la asimetria que se ve abajo, que parece un error
+                 y no lo es:
+                   Order       = orden de la OPERACION de modificar. Va 1, 2, 3
+                                 sin huecos.
+                   PartitionID = numero de PARTICION en el disco. Va 1, 2, 4,
+                                 porque la 3 es la MSR y se saltea.
+                 Confundir los dos y poner PartitionID 3 aca formatearia la MSR
+                 (o fallaria), e InstallTo apuntaria a una particion que no es
+                 la de Windows. -->
+            <!-- Windows: la unica con letra. -->
+            <ModifyPartition wcm:action="add">
+              <Order>3</Order>
+              <PartitionID>4</PartitionID>
+              <Label>Windows</Label>
+              <Letter>C</Letter>
+              <Format>NTFS</Format>
+            </ModifyPartition>
+          </ModifyPartitions>
+        </Disk>
+        <!-- WillShowUI va ACA, ultimo hijo de DiskConfiguration (no dentro de
+             Disk). OnError: si el particionado falla, que muestre la UI en vez
+             de morir sin decir nada. -->
+        <WillShowUI>OnError</WillShowUI>
+      </DiskConfiguration>
+
+      <!-- PartitionID 4 = la particion de Windows, NO la 1. La 1 es WinRE.
+           Instalar sobre la 1 entra en un pantano dificil de diagnosticar:
+           990 MB no alcanzan y el error no dice "elegiste la particion mal".
+           La guarda de 08-inject-runtime.ps1 verifica que este numero coincida
+           con la particion que lleva <Letter>C</Letter>. -->
+      <ImageInstall>
+        <OSImage>
+          <InstallTo>
+            <DiskID>0</DiskID>
+            <PartitionID>4</PartitionID>
+          </InstallTo>
+          <WillShowUI>OnError</WillShowUI>
+        </OSImage>
+      </ImageInstall>
+
+      <UserData>
+        <!-- Clave generica de Windows 11 Pro. NO activa nada: solo evita la pantalla
+             de product key y fija la edicion. Activas con tu licencia real despues.
+             La fase 8 reemplaza este <Key> por el de clave-windows.txt si existe,
+             igual que con el archivo de produccion. -->
+        <ProductKey>
+          <Key>VK7JG-NPHTM-C97JM-9MPGT-3V66T</Key>
+          <WillShowUI>OnError</WillShowUI>
+        </ProductKey>
+        <AcceptEula>true</AcceptEula>
+      </UserData>
+    </component>
+
+  </settings>
+
+  <!-- =====================================================================
+       PASS 2: specialize. Corre tras aplicar la imagen, antes del OOBE.
+
+       OJO CON EL COMPONENTE: RunSynchronous va en Microsoft-Windows-Deployment,
+       NO en Microsoft-Windows-Shell-Setup. Ponerlo en Shell-Setup aborta TODA la
+       instalacion con "The computer restarted unexpectedly". Log real:
+
+         [setup.exe] SMI data results dump: Source = Name: Microsoft-Windows-Shell-Setup,
+                     ... /settings/RunSynchronous
+         [setup.exe] SMI data results dump: Description = Setting is not defined in this component.
+         The provided unattend file is not valid; hrResult = 0x80220001
+         Windows could not parse or process unattend answer file for pass [specialize].
+
+       Este error vivio latente en el archivo original: como al unattend le faltaba
+       el pass windowsPE, se descartaba entero y nunca se llegaba a ejecutar. Al
+       arreglar aquello, esto salio a la luz.
+       ===================================================================== -->
+  <settings pass="specialize">
+    <component name="Microsoft-Windows-Deployment" processorArchitecture="amd64"
+               publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS"
+               xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State"
+               xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+      <RunSynchronous>
+        <!-- Region = Argentina (GeoID 11).
+
+             Se probo poner aca GeoID 68 (Irlanda, EEA) para que EdgeUpdate respetara
+             las policies de Edge, y NO funciono: el <UserLocale>es-AR</UserLocale> del
+             pass oobeSystem pisa el GeoID antes de que EdgeUpdate corra durante el OOBE.
+             Medido: la fase 7 escribia 68 en Users\Default\NTUSER.DAT y terminaba en 11.
+             Edge se frena matando EdgeUpdate en la fase 7, no jugando con la region.
+             Ver D19 y D20 en docs\decisiones.md.
+
+             BypassNRO tampoco esta aca: es redundante con el bloque UserAccounts del
+             pass oobeSystem, que es el que realmente crea la cuenta local. -->
+        <RunSynchronousCommand wcm:action="add">
+          <Order>1</Order>
+          <Description>Region Argentina</Description>
+          <Path>reg add "HKU\.DEFAULT\Control Panel\International\Geo" /v Nation /t REG_SZ /d 11 /f</Path>
+        </RunSynchronousCommand>
+      </RunSynchronous>
+    </component>
+  </settings>
+
+  <!-- =====================================================================
+       PASS 3: oobeSystem. La experiencia de primer arranque.
+       ===================================================================== -->
+  <settings pass="oobeSystem">
+
+    <component name="Microsoft-Windows-International-Core" processorArchitecture="amd64"
+               publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS"
+               xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State"
+               xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+      <!-- Teclado: espanol LatAm PRIMARIO + ingles US como adicional -->
+      <InputLocale>es-AR;en-US</InputLocale>
+      <SystemLocale>es-AR</SystemLocale>
+      <UILanguage>en-US</UILanguage>
+      <UserLocale>es-AR</UserLocale>
+    </component>
+
+    <component name="Microsoft-Windows-Shell-Setup" processorArchitecture="amd64"
+               publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS"
+               xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State"
+               xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+      <TimeZone>Argentina Standard Time</TimeZone>
+      <OOBE>
+        <HideEULAPage>true</HideEULAPage>
+        <HideOEMRegistrationScreen>true</HideOEMRegistrationScreen>
+        <HideOnlineAccountScreens>true</HideOnlineAccountScreens>
+        <HideLocalAccountScreen>true</HideLocalAccountScreen>
+        <HideWirelessSetupInOOBE>true</HideWirelessSetupInOOBE>
+        <ProtectYourPC>3</ProtectYourPC>
+      </OOBE>
+      <!-- Cuenta local creada por el unattend: el OOBE nunca llega a pedir cuenta
+           Microsoft. A DIFERENCIA de produccion, esta cuenta SI lleva password:
+           PowerShell Direct (Invoke-Command -VMName) no funciona con password
+           vacio y sin eso no se puede verificar el SO corriendo.
+           El password esta documentado en la cabecera de este archivo. -->
+      <UserAccounts>
+        <LocalAccounts>
+          <LocalAccount wcm:action="add">
+            <Name>pato</Name>
+            <DisplayName>pato</DisplayName>
+            <Group>Administrators</Group>
+            <Password>
+              <Value>LunaticOS-Test-2026</Value>
+              <PlainText>true</PlainText>
+            </Password>
+          </LocalAccount>
+        </LocalAccounts>
+      </UserAccounts>
+      <!-- AutoLogon: sin esto la VM queda en la pantalla de login y NADA de lo
+           que corre en el primer login llega a correr (el instalador de apps por
+           winget de la fase 11, el tema, el chequeo de que Explorer sobrevivio).
+           El E2E mediria una maquina a medio configurar y diria que esta bien.
+
+           LogonCount 5 y no 1: la instalacion reinicia varias veces y el runner
+           puede reiniciarla de nuevo. Cuando el contador llega a 0 el autologon
+           se apaga solo, que es lo que se quiere: la VM no queda logueada para
+           siempre por accidente.
+
+           El password TIENE que ser el mismo que el de LocalAccount de arriba.
+           Si se desincronizan, el autologon falla y la VM se queda en el login
+           sin decir por que. La fase 8 tiene una guarda que compara los dos. -->
+      <AutoLogon>
+        <Username>pato</Username>
+        <Enabled>true</Enabled>
+        <LogonCount>5</LogonCount>
+        <Password>
+          <Value>LunaticOS-Test-2026</Value>
+          <PlainText>true</PlainText>
+        </Password>
+      </AutoLogon>
+    </component>
+
+  </settings>
+
+</unattend>

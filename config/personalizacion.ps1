@@ -175,8 +175,34 @@ $Global:PersonalizacionCatalog = @(
 # Sin esto, alguien marca los tres acentos y gana el ultimo que se escriba,
 # que es justo el tipo de resultado silencioso e inexplicable que queremos evitar.
 # ---------------------------------------------------------------------------
+# ###################################################################
+#  LA COMA DE `@( ,@(...) )` NO ES UN TYPO. NO LA SAQUES.
+#
+#  PowerShell APLANA un array que contiene un solo array. MEDIDO en PS 5.1:
+#      @( @(1,2,3) ).Count       = 3    <-- el grupo se deshizo en 3 strings
+#      @( @(1,2), @(3,4) ).Count = 2    <-- con DOS grupos NO se aplana
+#      @( ,@(1,2,3) ).Count      = 1    <-- la coma lo salva
+#
+#  O sea: mientras hubo UN solo grupo excluyente, esta variable no contenia un
+#  grupo de tres claves, contenia TRES CLAVES SUELTAS. Y con `$grp` valiendo el
+#  string 'acento-teal', el `-contains` es una simple igualdad y el
+#  `foreach ($other in $grp)` itera una sola vez con el mismo key: NO HAY HERMANO
+#  A QUIEN DESMARCAR.
+#
+#  Sintoma real que llegaba al usuario: se podian marcar los TRES acentos a la vez,
+#  y ganaba el ultimo que se escribiera. Justo el resultado silencioso e
+#  inexplicable que los grupos excluyentes existen para evitar.
+#
+#  Y el self-test daba VERDE, porque solo verificaba que las claves existieran en
+#  el catalogo: `foreach ($k in 'un-string')` itera una vez con el string entero.
+#  El test media la existencia de las claves, no la ESTRUCTURA del grupo.
+#
+#  La TUI ademas normaliza esto por su cuenta (Resolve-TuiExclusive), asi que hoy
+#  funciona igual. Pero un dato que miente sobre su propia forma es una trampa para
+#  el proximo que lo lea: aca queda declarado como lo que es.
+# ###################################################################
 $Global:PersonalizacionExclusivos = @(
-  @('acento-violeta', 'acento-teal', 'acento-ambar')
+  , @('acento-violeta', 'acento-teal', 'acento-ambar')
 )
 
 # ---------------------------------------------------------------------------
