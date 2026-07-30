@@ -1416,13 +1416,51 @@ if ($Verify) {
             Write-Host ("  ok       {0}: no pedido, no aplicado" -f $c.desc) -ForegroundColor DarkGray
           }
         }
-        # Menu contextual clasico: es la EXISTENCIA de la clave, no un valor
-        $clsid = 'Software\Classes\CLSID\{86ca1aa0-34aa-4e8b-a509-50c905bae2a2}\InprocServer32'
-        & reg.exe query "$root\$clsid" 2>&1 | Out-Null
-        $menuOk = ($LASTEXITCODE -eq 0)
+        # ======================================================================
+        #  Menu contextual clasico: es la EXISTENCIA de la clave, no un valor.
+        #
+        #  Y SE MIDE EN UsrClass.dat, NO EN NTUSER.DAT.
+        #
+        #  HKCU\Software\Classes NO vive en NTUSER.DAT: vive en UsrClass.dat, que
+        #  es un hive SEPARADO (Users\<u>\AppData\Local\Microsoft\Windows\UsrClass.dat).
+        #  Este chequeo buscaba la clave en NTUSER.DAT, donde no puede estar nunca,
+        #  asi que daba "NO PEGO" SIEMPRE -- incluso con el fix funcionando.
+        #
+        #  MEDIDO en el build del 2026-07-29 23:06: el -Verify decia NO PEGO y la
+        #  clave ESTABA, en UsrClass.dat, con su (Default) vacio. Septima vez en
+        #  este proyecto que falla el instrumento y no el producto: un test que
+        #  mide en el lugar equivocado no es un test, es una alarma falsa que
+        #  manda a arreglar codigo que estaba bien.
+        # ======================================================================
         if ($pers -and $null -ne $pers.'menu-clasico') {
-          if ([bool]$pers.'menu-clasico' -eq $menuOk) { Write-Host ("  OK       menu contextual clasico (clave presente={0})" -f $menuOk) -ForegroundColor Green }
-          else { Write-Host ("  NO PEGO  menu contextual clasico: pedido={0} presente={1}" -f [bool]$pers.'menu-clasico', $menuOk) -ForegroundColor Red }
+          $clsidPath = 'CLSID\{86ca1aa0-34aa-4e8b-a509-50c905bae2a2}\InprocServer32'
+          # .FullName y no $userDir pelado: es un DirectoryInfo, igual que en el
+          # resto del archivo. Join-Path sobre el objeto anda por su ToString(),
+          # pero depender de eso es la clase de sutileza que despues no se explica.
+          $ucFile = if ($userDir) { Join-Path $userDir.FullName 'AppData\Local\Microsoft\Windows\UsrClass.dat' } else { $null }
+          $menuOk  = $false
+          $medible = $false
+          if (Test-Path $ucFile) {
+            & reg.exe load 'HKLM\VRF_UC' $ucFile 2>&1 | Out-Null
+            if ($LASTEXITCODE -eq 0) {
+              $medible = $true
+              try {
+                & reg.exe query "HKLM\VRF_UC\$clsidPath" 2>&1 | Out-Null
+                $menuOk = ($LASTEXITCODE -eq 0)
+              } finally {
+                [gc]::Collect(); Start-Sleep -Milliseconds 300
+                & reg.exe unload 'HKLM\VRF_UC' 2>&1 | Out-Null
+              }
+            }
+          }
+          if (-not $medible) {
+            # No inventar un veredicto: si no se pudo leer el hive, se dice.
+            Write-Host "  SIN MEDIR menu contextual clasico: no pude leer UsrClass.dat" -ForegroundColor Yellow
+          } elseif ([bool]$pers.'menu-clasico' -eq $menuOk) {
+            Write-Host ("  OK       menu contextual clasico (clave presente={0} en UsrClass.dat)" -f $menuOk) -ForegroundColor Green
+          } else {
+            Write-Host ("  NO PEGO  menu contextual clasico: pedido={0} presente={1} (medido en UsrClass.dat)" -f [bool]$pers.'menu-clasico', $menuOk) -ForegroundColor Red
+          }
         }
 
         # El modo que quedo escrito en el hive: se compara contra el .theme mas abajo.
