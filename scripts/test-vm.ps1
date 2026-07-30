@@ -480,52 +480,371 @@ function Get-IniSection {
 }
 
 # ---------------------------------------------------------------------------
-# InstallTheme / InstallThemeLight en las DOS ramas (contrato 2.1 y 7.6).
+# LAS SEIS CLAVES InstallTheme* (contrato 2.5 y 7.8).
 #
-# Si esta en una sola, el bug es SILENCIOSO: por la rama que quedo apuntando a
-# aero.theme vuelve el azul de fabrica y nadie sabe por que. Por eso "esta en una
-# de las dos" es FALLA y no un aviso.
+# SON TRES VALORES, NO DOS, y por DOS ramas del hive = 6:
+#     InstallTheme       rama generica
+#     InstallThemeDark   <-- ESTA no la escribiamos, y era la que Windows usaba
+#     InstallThemeLight
+#
+# MEDIDO en la VM del build 2026-07-29 20:32: el hive DEFAULT ya traia
+# AppsUseLightTheme=0, asi que Windows entro por la rama DARK y aplico el dark.theme
+# DE FABRICA (ColorizationColor=0XC40078D4, el azul, y Wallpaper=img19.jpg). Nuestro
+# LunaticOS.theme no se ignoro: SE APLICO OTRO.
+#
+# Por eso una que falte, o que apunte a aero.theme / dark.theme, es FALLA y no un
+# aviso: es exactamente la puerta por la que vuelve el color de fabrica, y el bug es
+# SILENCIOSO -- el registro queda "bien" y la UI sale de otro color.
 # ---------------------------------------------------------------------------
 function Get-InstallThemeFindings {
   param(
     [Parameter(Mandatory)][string]$SoftwareRoot,
     [Parameter(Mandatory)][string]$ExpectedPath,
-    [bool]$ThemeExpected = $true
+    [bool]$ThemeExpected = $true,
+    [string]$WantMode = ''
   )
   $out = New-Object System.Collections.Generic.List[object]
   $ramas = @('Microsoft\Windows\CurrentVersion\Themes',
              'WOW6432Node\Microsoft\Windows\CurrentVersion\Themes')
-  $apuntan = @(); $noApuntan = @()
+  $valores = @('InstallTheme', 'InstallThemeDark', 'InstallThemeLight')
+  $total = $ramas.Count * $valores.Count      # 6
+  $apuntan = @(); $noApuntan = @(); $deFabrica = @()
   foreach ($rama in $ramas) {
-    foreach ($valor in @('InstallTheme', 'InstallThemeLight')) {
+    foreach ($valor in $valores) {
       $e = Get-RegEntry -Key "$SoftwareRoot\$rama" -Name $valor
       $dato = if ($e) { "$($e.Data)" } else { '' }
       $etiqueta = "$rama\$valor"
-      if ($dato -and ($dato -eq $ExpectedPath)) { $apuntan += $etiqueta }
-      else { $noApuntan += ("{0} = {1}" -f $etiqueta, $(if ($dato) { $dato } else { '(no existe)' })) }
       if ($dato) { $out.Add(@{ Level = 'info'; Text = ("{0} = {1}" -f $etiqueta, $dato) }) }
+      if ($dato -and ($dato -eq $ExpectedPath)) { $apuntan += $etiqueta; continue }
+      $noApuntan += ("{0} = {1}" -f $etiqueta, $(if ($dato) { $dato } else { '(no existe)' }))
+      # Cualquier .theme de la carpeta de Windows es un tema DE FABRICA. Se mide asi
+      # y no contra la lista aero/dark: si manana el tema de fabrica se llama otra
+      # cosa, el chequeo sigue valiendo.
+      if ($dato -match '(?i)^.*\\Windows\\Resources\\Themes\\([^\\]+\.theme)$') {
+        $deFabrica += [pscustomobject]@{ Etiqueta = $etiqueta; Valor = $valor; Dato = $dato; Archivo = $Matches[1] }
+      }
     }
   }
+
   if (-not $ThemeExpected) {
     if ($apuntan.Count -gt 0) {
       $out.Add(@{ Level = 'OJO'; Text = ('DE MAS: el perfil no pidio tema, acento ni wallpaper y aun asi ' +
-          'InstallTheme apunta a LunaticOS.theme ({0} de 4 valores)' -f $apuntan.Count) })
+          'InstallTheme* apunta a LunaticOS.theme ({0} de {1} valores)' -f $apuntan.Count, $total) })
     }
     else {
-      $out.Add(@{ Level = 'OK'; Text = 'InstallTheme de fabrica: correcto, el perfil no pidio tema/acento/wallpaper' })
+      $out.Add(@{ Level = 'OK'; Text = 'InstallTheme* de fabrica: correcto, el perfil no pidio tema/acento/wallpaper' })
     }
     return $out.ToArray()
   }
-  if ($apuntan.Count -eq 4) {
-    $out.Add(@{ Level = 'OK'; Text = 'InstallTheme e InstallThemeLight apuntan a LunaticOS.theme en LAS DOS ramas' })
+
+  # Las que apuntan a un tema de Microsoft: se NOMBRA cual y que trae ese archivo.
+  foreach ($f in $deFabrica) {
+    $out.Add(@{ Level = 'FALLA'; Text = ('{0} apunta al {1} DE FABRICA de Windows' -f $f.Etiqueta, $f.Archivo) })
+    $out.Add(@{ Level = 'FALLA'; Text = ('  POR ESA RAMA vuelve el color de fabrica: al crear el perfil Windows aplica {0}, ' -f $f.Archivo) +
+        'que trae su propio ColorizationColor (el azul 0XC40078D4) y su propio wallpaper. ' +
+        'Nuestro LunaticOS.theme no se ignora: se aplica OTRO. Y falla en SILENCIO.' })
+  }
+  # Y la rama que Windows va a usar depende del modo que pidio el perfil. Si la que
+  # apunta a fabrica es JUSTO esa, no es un riesgo: es el bug, ya disparado.
+  if ($deFabrica.Count -gt 0 -and $WantMode) {
+    $valorDelModo = if ($WantMode -eq 'Dark') { 'InstallThemeDark' } else { 'InstallThemeLight' }
+    $justo = @($deFabrica | Where-Object { $_.Valor -eq $valorDelModo })
+    if ($justo.Count -gt 0) {
+      $out.Add(@{ Level = 'FALLA'; Text = ('y es JUSTO LA RAMA QUE WINDOWS USA: el perfil pidio tema {0}, o sea que Windows ' -f $WantMode) +
+          ('entra por {1}. ESTE ES EL BUG DEL PRIMER BUILD (contrato 2.5): tema {0} correcto y acento AZUL.' -f $WantMode, $valorDelModo) })
+    }
+  }
+
+  if ($apuntan.Count -eq $total) {
+    $out.Add(@{ Level = 'OK'; Text = ('las {0} claves InstallTheme* apuntan a LunaticOS.theme ' -f $total) +
+        '(InstallTheme + InstallThemeDark + InstallThemeLight x Themes y WOW6432Node)' })
   }
   elseif ($apuntan.Count -eq 0) {
-    $out.Add(@{ Level = 'FALLA'; Text = 'InstallTheme no apunta a LunaticOS.theme en NINGUNA rama: al crear el ' +
-        'perfil Windows aplica aero.theme (Light + azul de fabrica) y el tema y el acento se pierden' })
+    $out.Add(@{ Level = 'FALLA'; Text = ('NINGUNA de las {0} claves InstallTheme* apunta a LunaticOS.theme: al crear el perfil ' -f $total) +
+        'Windows aplica su tema de fabrica y el tema y el acento se pierden enteros' })
   }
   else {
-    $out.Add(@{ Level = 'FALLA'; Text = ('InstallTheme incompleto: {0} de 4 valores apuntan a LunaticOS.theme. ' -f $apuntan.Count) +
-        'Falta ' + ($noApuntan -join ' ; ') + ' -- por esa rama vuelve el azul y el bug es SILENCIOSO' })
+    $out.Add(@{ Level = 'FALLA'; Text = ('InstallTheme* INCOMPLETO: {0} de {1} claves apuntan a LunaticOS.theme. ' -f $apuntan.Count, $total) +
+        'Falta ' + ($noApuntan -join ' ; ') + ' -- por esa rama vuelve el color de fabrica y el bug es SILENCIOSO' })
+  }
+  return $out.ToArray()
+}
+
+# ---------------------------------------------------------------------------
+# Un ColorizationColor de .theme ('0XC414B8A6') como color legible ('#14B8A6').
+# Un '0XC40078D7' en pantalla no le dice a nadie que es el azul de Windows.
+# ---------------------------------------------------------------------------
+function Format-ThemeColorHex {
+  param([string]$ThemeColor)
+  $h = ("$ThemeColor" -replace '(?i)^0x', '').Trim()
+  if ($h -notmatch '^[0-9A-Fa-f]{8}$') { return "$ThemeColor" }
+  return (Convert-DwordToColor -Dword ([Convert]::ToUInt32($h, 16)) -Layout 'ARGB').Hex
+}
+
+# ---------------------------------------------------------------------------
+# EL Custom.theme QUE GENERO WINDOWS: la evidencia de que aplico DE VERDAD.
+#
+# Windows escribe Users\<user>\AppData\Local\Microsoft\Windows\Themes\Custom.theme
+# con el tema VIGENTE. No es lo que pedimos nosotros: es lo que Windows hizo.
+#
+# ESTE CHEQUEO ES EL QUE HABRIA CAZADO EL BUG DEL PRIMER BUILD, y por eso existe.
+# Medido en la VM del 2026-07-29 20:32: nuestro LunaticOS.theme decia
+# ColorizationColor=0XC414B8A6 (el teal pedido) y el Custom.theme decia 0XC40078D7,
+# el AZUL DE FABRICA. O sea que Windows no ignoro nuestro tema: APLICO OTRO -- el
+# dark.theme, por la rama InstallThemeDark que no escribiamos.
+# Comparar el .theme contra el hive no alcanzaba para verlo (los dos podian estar
+# "coherentes" con el tema equivocado). Este archivo lo dice sin ambiguedad.
+# ---------------------------------------------------------------------------
+function Get-CustomThemeFindings {
+  param(
+    [Parameter(Mandatory)][string]$Path,
+    [string]$WantMode = '',
+    [string]$WantThemeColor = '',     # '0XC414B8A6', tal cual lo da ConvertTo-AccentDwords
+    [bool]$ThemeExpected = $true
+  )
+  $out = New-Object System.Collections.Generic.List[object]
+  if (-not (Test-Path -LiteralPath $Path)) {
+    if ($ThemeExpected) {
+      $out.Add(@{ Level = 'OJO'; Text = ('no existe {0}: Windows no dejo su Custom.theme. ' -f $Path) +
+          'Sin ese archivo NO hay evidencia directa de QUE tema aplico Windows -- el veredicto sale del hive, ' +
+          'que es mas indirecto (el hive puede quedar coherente con el tema equivocado).' })
+    }
+    else {
+      $out.Add(@{ Level = 'info'; Text = 'no hay Custom.theme y el perfil no pidio tema/acento/wallpaper: nada que comparar' })
+    }
+    return $out.ToArray()
+  }
+  $vs = Get-IniSection -Path $Path -Section 'VisualStyles'
+  if (-not $vs) {
+    $out.Add(@{ Level = 'FALLA'; Text = ('{0} existe pero NO tiene seccion [VisualStyles]: no puedo leer que aplico Windows' -f $Path) })
+    return $out.ToArray()
+  }
+  $out.Add(@{ Level = 'info'; Text = '[VisualStyles] del Custom.theme -- LO QUE WINDOWS APLICO DE VERDAD:' })
+  foreach ($k in $vs.Keys) { $out.Add(@{ Level = 'info'; Text = ('      {0}={1}' -f $k, $vs[$k]) }) }
+
+  # --- EL COLOR ---
+  $got = "$($vs['ColorizationColor'])".Trim()
+  if ($WantThemeColor) {
+    $wantHex = Format-ThemeColorHex $WantThemeColor
+    if (-not $got) {
+      $out.Add(@{ Level = 'FALLA'; Text = ('el Custom.theme NO declara ColorizationColor y el perfil pidio {0}: el color no llego' -f $wantHex) })
+    }
+    elseif ($got.ToUpperInvariant() -eq "$WantThemeColor".ToUpperInvariant()) {
+      $out.Add(@{ Level = 'OK'; Text = ('el Custom.theme lleva el acento PEDIDO: {0} = {1}' -f $got, $wantHex) })
+    }
+    else {
+      $gotHex = Format-ThemeColorHex $got
+      $out.Add(@{ Level = 'FALLA'; Text = 'EL COLOR QUE APLICO WINDOWS NO ES EL QUE PEDIMOS' })
+      $out.Add(@{ Level = 'FALLA'; Text = ('  Custom.theme (lo que Windows aplico) = {0}  ->  {1}' -f $got, $gotHex) })
+      $out.Add(@{ Level = 'FALLA'; Text = ('  perfil / LunaticOS.theme (lo que pedimos) = {0}  ->  {1}' -f $WantThemeColor, $wantHex) })
+      # El azul de fabrica tiene nombre y apellido: se lo dice.
+      if ($gotHex -match '^#0078D[0-9A-F]$') {
+        $out.Add(@{ Level = 'FALLA'; Text = ('  {0} ES EL AZUL DE FABRICA DE WINDOWS. Conclusion: Windows no ignoro nuestro tema, ' -f $gotHex) +
+            'APLICO OTRO (aero.theme o dark.theme). CAUSA MAS PROBABLE, y esta MEDIDA: falta una de las 6 claves ' +
+            'InstallTheme* -- sobre todo InstallThemeDark, que de fabrica apunta a dark.theme (contrato 2.5). ' +
+            'CAUSA SECUNDARIA: el apply del primer login fallo o no-opeo -- mira el hr en el log del RunOnce.' })
+      }
+      else {
+        $out.Add(@{ Level = 'FALLA'; Text = '  no es el azul de fabrica, asi que no es "se aplico otro tema": o el motor de temas ' +
+            'normalizo el color, o la fase 10 escribio otro. Compara este valor contra [VisualStyles] ' +
+            'ColorizationColor de Windows\Resources\Themes\LunaticOS.theme (esta dumpeado mas arriba).' })
+      }
+    }
+  }
+  elseif ($got) {
+    $out.Add(@{ Level = 'info'; Text = ('el Custom.theme declara ColorizationColor={0} -> {1} (el perfil no pidio acento)' -f $got, (Format-ThemeColorHex $got)) })
+  }
+
+  # --- EL MODO ---
+  foreach ($mv in @('SystemMode', 'AppMode')) {
+    $val = "$($vs[$mv])".Trim()
+    if (-not $val) { $out.Add(@{ Level = 'OJO'; Text = ('el Custom.theme no declara {0}' -f $mv) }); continue }
+    if ($val -notmatch '^(Dark|Light)$') {
+      $out.Add(@{ Level = 'FALLA'; Text = ("Custom.theme {0}='{1}': tiene que ser Dark o Light" -f $mv, $val) }); continue
+    }
+    if (-not $WantMode) { $out.Add(@{ Level = 'info'; Text = ('Custom.theme {0}={1} (el perfil no pidio modo)' -f $mv, $val) }); continue }
+    if ($val -eq $WantMode) { $out.Add(@{ Level = 'OK'; Text = ('Custom.theme {0}={1}: es el que pidio el perfil' -f $mv, $val) }) }
+    else {
+      $out.Add(@{ Level = 'FALLA'; Text = ('Custom.theme {0}={1} y el perfil pidio {2}: el tema que Windows aplico tiene OTRO MODO' -f $mv, $val, $WantMode) })
+    }
+  }
+  return $out.ToArray()
+}
+
+# ---------------------------------------------------------------------------
+# EL LOG DEL RunOnce (ProgramData\LunaticOS\personalizar.log).
+#
+# Dos cosas se miden, y son distintas:
+#   1. QUE EXISTA. Si no existe, el RunOnce nunca corrio, o sea que el tema NO SE
+#      APLICO. Escribir valores no aplica nada: quien traduce registro -> colores es
+#      el motor de temas, y solo corre cuando se APLICA un tema (contrato 2.5).
+#   2. EL hr DEL APPLY. Y aca hay una trampa medida: 0xFFFFFFFF NO ES UN HRESULT, es
+#      el valor inicial de la variable. Significa que AddAndSelectTheme tiro
+#      COMException en vez de devolver el codigo, o sea que FALTA [PreserveSig]
+#      (contrato 2.10-D). En ese caso el log MIENTE y no se le puede creer nada.
+# ---------------------------------------------------------------------------
+function Get-RunOnceLogFindings {
+  param([Parameter(Mandatory)][string]$Path, [bool]$Expected = $true)
+  $out = New-Object System.Collections.Generic.List[object]
+  if (-not (Test-Path -LiteralPath $Path)) {
+    if ($Expected) {
+      $out.Add(@{ Level = 'FALLA'; Text = ('NO EXISTE {0}: el script del primer login NUNCA CORRIO. ' -f $Path) +
+          'Sin el, el tema no se APLICA -- InstallTheme* es necesario pero no suficiente. Revisa el RunOnce ' +
+          'AALunaticOSPersonalizar del hive DEFAULT y que exista Windows\Setup\Scripts\lunaticos-personalizar.ps1.' })
+    }
+    else {
+      $out.Add(@{ Level = 'info'; Text = 'no hay log del RunOnce, y el perfil no pidio nada que reaplicar: puede ser correcto' })
+    }
+    return $out.ToArray()
+  }
+  $lineas = @(Get-Content -LiteralPath $Path -ErrorAction SilentlyContinue)
+  $out.Add(@{ Level = 'info'; Text = ('{0} ({1} lineas)' -f $Path, $lineas.Count) })
+
+  # TODOS los intentos, no solo el ultimo: la cadena de tres niveles del contrato
+  # 2.10-C (apply / ThemeId nuevo / a mano) tiene que quedar visible.
+  $hrs = @()
+  foreach ($l in $lineas) {
+    $m = [regex]::Match("$l", '(?i)AddAndSelectTheme\s+hr\s*=\s*0x([0-9A-Fa-f]{1,8})')
+    if ($m.Success) { $hrs += $m.Groups[1].Value.ToUpperInvariant().PadLeft(8, '0') }
+  }
+  if ($hrs.Count -eq 0) {
+    $out.Add(@{ Level = 'FALLA'; Text = 'el log existe pero NO tiene ni un "AddAndSelectTheme hr=0x...": el apply del tema no ' +
+        'llego a correr. El script arranco y murio antes -- mira las lineas marcadas con "!".' })
+  }
+  else {
+    $out.Add(@{ Level = 'info'; Text = ('intentos de apply: {0}  ->  hr {1}' -f $hrs.Count, (($hrs | ForEach-Object { "0x$_" }) -join ', ')) })
+  }
+  foreach ($hr in $hrs) {
+    if ($hr -eq '00000000') {
+      $out.Add(@{ Level = 'OK'; Text = 'AddAndSelectTheme hr=0x00000000: el motor de temas acepto el .theme' }); continue
+    }
+    if ($hr -eq 'FFFFFFFF') {
+      $out.Add(@{ Level = 'FALLA'; Text = 'AddAndSelectTheme hr=0xFFFFFFFF, y ESE NO ES UN HRESULT: es el valor inicial de la ' +
+          'variable. Significa que el metodo tiro COMException en vez de devolver el codigo, o sea que FALTA ' +
+          '[PreserveSig] en la declaracion (contrato 2.10-D). EL LOG NO ES CONFIABLE: el error real esta oculto ' +
+          'justo donde mas importa. Arregla eso ANTES de creerle una sola linea a este archivo.' }); continue
+    }
+    if ($hr -eq '80004005') {
+      $out.Add(@{ Level = 'FALLA'; Text = 'AddAndSelectTheme hr=0x80004005 (E_FAIL): el motor de temas RECHAZO el .theme ENTERO, ' +
+          'o sea que no aplico NI el modo NI el color. Causa MEDIDA y bisecada: al .theme le falta la seccion ' +
+          '[Control Panel\Desktop] con una linea Wallpaper= (contrato 2.10-A).' }); continue
+    }
+    $out.Add(@{ Level = 'FALLA'; Text = ('AddAndSelectTheme hr=0x{0}: el apply del tema FALLO' -f $hr) })
+  }
+
+  # El veredicto que escribio el propio script. Se cita, no se reinterpreta.
+  if (@($lineas | Where-Object { $_ -match 'EL TEMA NO SE APLICO' }).Count -gt 0) {
+    $out.Add(@{ Level = 'FALLA'; Text = 'el script del primer login concluyo "EL TEMA NO SE APLICO" (lo dice el log, no yo). ' +
+        'Sintoma esperable en la VM: modo correcto pero acento AZUL, o modo claro.' })
+  }
+  elseif (@($lineas | Where-Object { $_ -match 'tema APLICADO y verificado' }).Count -gt 0) {
+    $out.Add(@{ Level = 'OK'; Text = 'el script verifico el resultado CONTRA EL REGISTRO y no solo el hr: tema aplicado' })
+  }
+  if (@($lineas | Where-Object { $_ -match 'NO-OP SILENCIOSO' }).Count -gt 0) {
+    $out.Add(@{ Level = 'OJO'; Text = 'el log detecto el NO-OP SILENCIOSO de Windows (hr=0 y el registro sin cambiar). ' +
+        'Si el ultimo intento quedo OK, la cadena de reintentos hizo su trabajo -- pero quedo registrado.' })
+  }
+  if (@($lineas | Where-Object { $_ -match 'ultimo recurso' }).Count -gt 0) {
+    $out.Add(@{ Level = 'OJO'; Text = 'hubo que llegar al ULTIMO RECURSO (escribir los valores a mano): el motor de temas no ' +
+        'aplico el color. Los DWORD quedan bien, pero la paleta de 8 tonos la deriva Windows y ahi no se regenero.' })
+  }
+  if (@($lineas | Where-Object { $_ -match 'AccentPalette\[3\]' }).Count -gt 0) {
+    foreach ($l in @($lineas | Where-Object { $_ -match 'AccentPalette\[3\]' })) {
+      $out.Add(@{ Level = 'info'; Text = ('      ' + "$l".Trim()) })
+    }
+  }
+  # Y las lineas de error del propio script, tal cual las escribio.
+  $malas = @($lineas | Where-Object { $_ -match '\s!' })
+  if ($malas.Count -gt 0) {
+    $out.Add(@{ Level = 'OJO'; Text = ('el log tiene {0} linea(s) marcadas con "!":' -f $malas.Count) })
+    foreach ($l in ($malas | Select-Object -First 12)) { $out.Add(@{ Level = 'info'; Text = ('      ' + "$l".Trim()) }) }
+  }
+  return $out.ToArray()
+}
+
+# ---------------------------------------------------------------------------
+# Themes\Personalize tiene que tener LOS TRES valores (contrato 2.10-B).
+#
+# Que falte uno es el sintoma EXACTO del bug del New-Item -Force: el script del
+# primer login recreaba la clave antes de cada Set-ItemProperty, y -Force sobre una
+# clave QUE YA EXISTE le BORRA TODOS LOS VALORES. El item del acento en la taskbar
+# (ColorPrevalence) se comia el AppsUseLightTheme y el SystemUsesLightTheme que
+# acababa de escribir el item del tema oscuro.
+#
+# Y ACA ESTA LO QUE HAY QUE DISTINGUIR: un valor AUSENTE no es neutro, SIGNIFICA
+# CLARO. "no esta" y "esta en 1" se ven igual en la UI y son bugs DISTINTOS: uno es
+# que no escribimos, el otro es que escribimos lo contrario. Un chequeo que los
+# confunde manda a buscar el bug al lugar equivocado.
+#
+# Recibe la salida de Get-RegTree sobre la clave, asi se puede correr contra un hive
+# sembrado a mano.
+# ---------------------------------------------------------------------------
+function Get-PersonalizeValuesFindings {
+  param(
+    $Entries,
+    [string]$WantMode = '',
+    [bool]$WantColorPrevalence = $false
+  )
+  $out = New-Object System.Collections.Generic.List[object]
+  $porNombre = @{}
+  # Iteracion directa, sin @(): ver la nota de Get-SettingsBlockerFindings.
+  foreach ($e in $Entries) { if ($e -and "$($e.Name)") { $porNombre["$($e.Name)"] = $e } }
+
+  function LeerVal($e) {
+    $u = Get-RegU32 $e
+    if ($null -ne $u) { return "$u" }
+    return "$($e.Data)"
+  }
+
+  # Lo que HAY, siempre, antes de cualquier veredicto. El dato crudo no se esconde.
+  $nombres = @($porNombre.Keys | Sort-Object)
+  if ($nombres.Count -eq 0) {
+    $out.Add(@{ Level = 'FALLA'; Text = 'Themes\Personalize NO TIENE NI UN VALOR: o la clave se recreo VACIA (el bug del ' +
+        'New-Item -Force, contrato 2.10-B) o nunca se escribio. Para Windows, todo ausente = tema CLARO.' })
+  }
+  else {
+    $pares = @()
+    foreach ($n in $nombres) { $pares += ("{0}={1}" -f $n, (LeerVal $porNombre[$n])) }
+    $out.Add(@{ Level = 'info'; Text = ('Themes\Personalize tiene {0} valor(es): {1}' -f $nombres.Count, ($pares -join '  ')) })
+  }
+
+  $esperados = New-Object System.Collections.Generic.List[object]
+  if ($WantMode) {
+    $v = if ($WantMode -eq 'Dark') { 0 } else { 1 }
+    $esperados.Add(@{ Name = 'AppsUseLightTheme';    Want = $v; Porque = ("el perfil pidio tema {0}" -f $WantMode) })
+    $esperados.Add(@{ Name = 'SystemUsesLightTheme'; Want = $v; Porque = ("el perfil pidio tema {0}" -f $WantMode) })
+  }
+  if ($WantColorPrevalence) {
+    $esperados.Add(@{ Name = 'ColorPrevalence'; Want = 1; Porque = 'el perfil pidio el acento en taskbar y bordes' })
+  }
+  if ($esperados.Count -eq 0) {
+    $out.Add(@{ Level = 'info'; Text = 'el perfil no pidio modo ni acento en taskbar: no hay valores obligatorios en Themes\Personalize' })
+    return $out.ToArray()
+  }
+
+  $faltan = @()
+  foreach ($x in $esperados) {
+    $e = $porNombre["$($x.Name)"]
+    if (-not $e) {
+      $faltan += "$($x.Name)"
+      $out.Add(@{ Level = 'FALLA'; Text = ('Themes\Personalize\{0} NO EXISTE ({1}). ' -f $x.Name, $x.Porque) +
+          'Y un valor AUSENTE no es neutro: para Windows significa CLARO.' })
+      continue
+    }
+    $got = LeerVal $e
+    if ($got -eq "$($x.Want)") {
+      $out.Add(@{ Level = 'OK'; Text = ('Themes\Personalize\{0}={1}: presente y correcto ({2})' -f $x.Name, $got, $x.Porque) })
+    }
+    else {
+      $out.Add(@{ Level = 'FALLA'; Text = ('Themes\Personalize\{0}={1} y se esperaba {2} ({3}). ' -f $x.Name, $got, $x.Want, $x.Porque) +
+          'El valor EXISTE pero esta en lo contrario: no es el bug del New-Item -Force, es que se escribio mal.' })
+    }
+  }
+  if ($faltan.Count -gt 0) {
+    $out.Add(@{ Level = 'FALLA'; Text = ('FALTAN {0} de {1} valores en Themes\Personalize ({2}). ' -f $faltan.Count, $esperados.Count, ($faltan -join ', ')) +
+        'ES EL SINTOMA EXACTO del bug del New-Item -Force (contrato 2.10-B): -Force sobre una clave que ya existe ' +
+        'le BORRA TODOS LOS VALORES, asi que el ultimo Set-ItemProperty del script del primer login se come los ' +
+        'anteriores. Revisa que el script generado cree las claves con una guarda Test-Path.' })
   }
   return $out.ToArray()
 }
@@ -624,6 +943,19 @@ function Get-VerifyRequestedAccent {
   $a = @($Items | Where-Object { $_.Accent })
   if ($a.Count -gt 0) { return "$($a[0].Accent)" }
   return ''
+}
+
+# Si el perfil pidio el acento en taskbar y bordes. Se deduce del VALOR que escribe
+# el item (ColorPrevalence) y NO de su Key, por la misma razon que arriba: el dia que
+# alguien renombre 'acento-en-taskbar' el chequeo tiene que seguir valiendo.
+function Get-VerifyRequestedColorPrevalence {
+  param($Items)
+  foreach ($it in $Items) {
+    foreach ($r in $it.Regs) {
+      if ($r -and "$($r.v)" -eq 'ColorPrevalence') { return $true }
+    }
+  }
+  return $false
 }
 
 # Imprime un finding con el color que le corresponde al nivel.
@@ -996,6 +1328,14 @@ if ($Verify) {
     }
     $wantMode   = Get-VerifyRequestedMode   $pickedItems
     $wantAccent = Get-VerifyRequestedAccent $pickedItems
+    $wantColorPrevalence = Get-VerifyRequestedColorPrevalence $pickedItems
+    # El color esperado en formato .theme ('0XC414B8A6'), por el UNICO helper del repo
+    # (contrato 1.3). Si el instrumento hace su propia cuenta puede equivocarse igual
+    # que el producto y darle la razon al bug.
+    $wantThemeColor = ''
+    if ($wantAccent -and (Get-Command ConvertTo-AccentDwords -ErrorAction SilentlyContinue)) {
+      $wantThemeColor = (ConvertTo-AccentDwords $wantAccent).ThemeColor
+    }
 
     # Wallpaper propio: se mira la MISMA carpeta que mira la fase 10, con el mismo
     # Get-ChildItem 'ruta\*' (con -Include y sin \* no filtra NADA y "no hay
@@ -1029,10 +1369,10 @@ if ($Verify) {
     $script:hiveAppsLight = $null
     $script:hiveSysLight  = $null
 
-    $userHive = Get-ChildItem "$d\Users" -Directory -Force -EA SilentlyContinue |
-                  Where-Object { $_.Name -notin @('Public','Default','Default User','All Users','defaultuser0') } |
-                  ForEach-Object { Join-Path $_.FullName 'NTUSER.DAT' } |
-                  Where-Object { Test-Path $_ } | Select-Object -First 1
+    $userDir = Get-ChildItem "$d\Users" -Directory -Force -EA SilentlyContinue |
+                 Where-Object { $_.Name -notin @('Public','Default','Default User','All Users','defaultuser0') } |
+                 Where-Object { Test-Path (Join-Path $_.FullName 'NTUSER.DAT') } | Select-Object -First 1
+    $userHive = if ($userDir) { Join-Path $userDir.FullName 'NTUSER.DAT' } else { $null }
     if (-not $userHive) {
       Write-Host "  (no encontre NTUSER.DAT de un usuario real)" -ForegroundColor Yellow
     } else {
@@ -1088,6 +1428,18 @@ if ($Verify) {
         # El modo que quedo escrito en el hive: se compara contra el .theme mas abajo.
         $script:hiveAppsLight = RegVal $themes 'AppsUseLightTheme'
         $script:hiveSysLight  = RegVal $themes 'SystemUsesLightTheme'
+
+        # ------------------------------------------------------------------
+        #  Themes\Personalize: LOS TRES VALORES (contrato 2.10-B).
+        #
+        #  Los checks de arriba miran un valor por vez y no pueden ver la CLASE del
+        #  bug: que la clave se haya recreado y perdido valores. Aca se mira la clave
+        #  COMPLETA, y se distingue "esta en 1" de "NO ESTA" -- que no es lo mismo,
+        #  porque un valor ausente significa CLARO.
+        # ------------------------------------------------------------------
+        Write-Host "`n--- Themes\Personalize: los TRES valores (un ausente significa CLARO) ---" -ForegroundColor Cyan
+        foreach ($f in (Get-PersonalizeValuesFindings -Entries (Get-RegTree -Key "$root\$themes") `
+                          -WantMode $wantMode -WantColorPrevalence $wantColorPrevalence)) { Write-Finding $f }
 
         # ------------------------------------------------------------------
         #  COLOR REAL DEL ACENTO (contrato 7.8) -- el test que faltaba.
@@ -1224,7 +1576,33 @@ if ($Verify) {
     }
 
     # ------------------------------------------------------------------------
-    #  Hive SOFTWARE: InstallTheme (2 ramas), activacion e inventario de policies.
+    #  EL Custom.theme DE WINDOWS: la evidencia de que aplico DE VERDAD.
+    #
+    #  Todo lo de arriba compara NUESTRO .theme contra el hive. Los dos pueden estar
+    #  perfectamente coherentes... con el tema equivocado. Este archivo lo escribe
+    #  WINDOWS con el tema VIGENTE, asi que es lo unico que dice sin ambiguedad QUE
+    #  aplico. En el primer build decia 0XC40078D7 (azul de fabrica) mientras nuestro
+    #  .theme decia 0XC414B8A6 (teal): ahi estaba el bug, y no lo veiamos.
+    # ------------------------------------------------------------------------
+    Write-Host "`n--- Custom.theme: QUE APLICO WINDOWS DE VERDAD (no que le pedimos) ---" -ForegroundColor Cyan
+    if (-not $userDir) {
+      Write-Finding @{ Level = 'OJO'; Text = 'no hay perfil de usuario real: no hay Custom.theme que leer' }
+    }
+    else {
+      $customTheme = Join-Path $userDir.FullName 'AppData\Local\Microsoft\Windows\Themes\Custom.theme'
+      foreach ($f in (Get-CustomThemeFindings -Path $customTheme -WantMode $wantMode `
+                        -WantThemeColor $wantThemeColor -ThemeExpected $themeExpected)) { Write-Finding $f }
+    }
+
+    # ------------------------------------------------------------------------
+    #  EL LOG DEL RunOnce: si no esta, el tema NO SE APLICO (contrato 2.5 y 2.6).
+    # ------------------------------------------------------------------------
+    Write-Host "`n--- RunOnce del primer login: el log y el hr del apply ---" -ForegroundColor Cyan
+    foreach ($f in (Get-RunOnceLogFindings -Path "$d\ProgramData\LunaticOS\personalizar.log" `
+                      -Expected $themeExpected)) { Write-Finding $f }
+
+    # ------------------------------------------------------------------------
+    #  Hive SOFTWARE: las 6 InstallTheme*, activacion e inventario de policies.
     #  TODO en UNA carga: cada load/unload es un riesgo de dejar el hive tomado.
     # ------------------------------------------------------------------------
     $itFindings  = New-Object System.Collections.Generic.List[object]
@@ -1234,7 +1612,7 @@ if ($Verify) {
       param($root)
       foreach ($f in (Get-InstallThemeFindings -SoftwareRoot $root `
                         -ExpectedPath 'C:\Windows\Resources\Themes\LunaticOS.theme' `
-                        -ThemeExpected $themeExpected)) { $itFindings.Add($f) }
+                        -ThemeExpected $themeExpected -WantMode $wantMode)) { $itFindings.Add($f) }
       foreach ($f in (Get-ActivationFindings -SoftwareRoot $root -Drive $d)) { $actFindings.Add($f) }
       foreach ($br in @(
           @{ Label = 'HKLM\SOFTWARE\Policies';                                         Sub = 'Policies' }
@@ -1256,6 +1634,7 @@ if ($Verify) {
       Write-Host ("  ! no pude leer el hive SOFTWARE: {0}" -f $_.Exception.Message) -ForegroundColor Red
       Write-Host  "    si quedo uno cargado de una corrida que murio:  reg unload HKLM\VRF_POL" -ForegroundColor Yellow
     }
+    Write-Host "`n--- Las SEIS claves InstallTheme* (3 valores x 2 ramas del hive) ---" -ForegroundColor Cyan
     foreach ($f in $itFindings) { Write-Finding $f }
 
     Write-Host "`n--- ACTIVACION (sin activar, Personalization esta en gris por LICENCIA) ---" -ForegroundColor Cyan

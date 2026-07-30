@@ -157,18 +157,169 @@ Reglas de armado:
 - `Wallpaper`: se omite la seccion `[Control Panel\Desktop]` completa si no hay wallpaper propio.
 - Si no hay ni tema ni acento ni wallpaper: **no se genera el .theme y no se toca `InstallTheme`.**
 
-### 2.4 UNA sola fuente de verdad para el color
+### 2.4 DOS CAPAS COHERENTES, no dos fuentes en conflicto
 
-Si el `.theme` lleva el color, **el RunOnce NO escribe ningun valor de color**
-(`AccentColor`, `ColorizationColor`, `AccentPalette`, `AccentColorMenu`, `StartColorMenu`).
-Dos fuentes = la desalineacion que teniamos. El `.theme` gana siempre.
+**CORREGIDO el 2026-07-29 (segunda vuelta).** Este apartado decia antes que el `.theme`
+era la fuente unica del color y que el RunOnce no debia escribir ningun valor de color.
+**Eso fue un error de diseno mio y costo un build entero:** el `.theme` no se aplicaba, asi
+que nadie escribia el color y el acento quedaba en el azul de fabrica.
 
-### 2.5 A medir en la VM (no asumir)
+Lo correcto:
 
-Vaciar `InstallTheme` fue una tecnica valida en Win10 21H2 y **se reporta rota desde 22H2**.
-Nosotros no la usamos: apuntamos `InstallTheme` a nuestro tema, que es lo que hacen los OEM.
-**Hay que verificar en la VM que 25H2 lo respeta.** Si no lo respeta, el plan B es el
-RunOnce aplicando el `.theme`, y en ese caso vale la seccion 2.4 al reves.
+- El `.theme` lleva `ColorizationColor` (ARGB) y `AutoColorization=0`.
+- El hive DEFAULT y el RunOnce **tambien** escriben los valores de color, en su formato
+  (tabla de la seccion 1).
+- **No es duplicacion peligrosa porque las dos capas derivan del MISMO hex a traves del
+  MISMO helper** (`ConvertTo-AccentDwords`). El bug original no era tener dos capas: era
+  tener dos capas con formatos de bytes distintos calculados a mano en dos lugares.
+
+Y hace falta la segunda capa porque el no-op de Windows es por VALOR (ver 2.10).
+
+### 2.5 SON TRES RAMAS, NO DOS: `InstallThemeDark` era el bug
+
+**MEDIDO en el build del 2026-07-29 20:32 (VM instalada):** el tema salio en modo oscuro
+pero con el acento AZUL de fabrica, y nuestro `LunaticOS.theme` parecia ignorado.
+No estaba ignorado: **se aplico OTRO**.
+
+```
+HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Themes
+  InstallTheme       = ...\aero.theme
+  InstallThemeDark   = ...\dark.theme     <-- ESTA NO LA ESCRIBIAMOS
+  InstallThemeLight  = ...\aero.theme
+```
+
+Son **TRES** valores, y nosotros escribiamos dos. Como el hive DEFAULT ya traia
+`AppsUseLightTheme=0` / `SystemUsesLightTheme=0`, Windows tomo la rama **Dark** y aplico
+el `dark.theme` de fabrica, que trae `ColorizationColor=0XC40078D4` (el azul) y
+`Wallpaper=img19.jpg`. De ahi salia el azul, y el `Custom.theme` que Windows genero para
+el usuario lo dejo escrito.
+
+**Hay que escribir las TRES en las DOS ramas del hive = 6 valores.**
+
+Y por que el modo oscuro quedaba escrito pero la UI se veia clara: staff de NTLite lo
+confirma en dos hilos -- el aprovisionamiento del usuario nuevo corre justo antes del
+primer logon e **ignora o pisa** las settings HKCU de escritorio del hive Default. Quien
+traduce registro -> colores es el **motor de temas**, y ese solo corre **cuando se aplica
+un tema**. Escribir los valores no aplica nada. Por eso el usuario tuvo que forzar un
+ciclo de apply a mano (ver 2.7) para que el oscuro apareciera.
+
+### 2.6 Aplicar el tema en el primer login: `IThemeManager2::AddAndSelectTheme`
+
+`InstallTheme*` es necesario pero **no suficiente**. En el primer login hay que APLICAR el
+tema, y el metodo esta MEDIDO en una maquina real (build 22631, PowerShell 5.1):
+`hr=0x00000000`, **856 ms**, **NO abre Settings**, y de UNA sola llamada dejo escritos
+`DWM\AccentColor`, `ColorizationColor`, `ColorizationAfterglow`, `AccentColorMenu`,
+`StartColorMenu`, `AccentPalette` y `CurrentTheme`.
+
+```
+CLSID  9324da94-50ec-4a14-a770-e90ca03e7c8f
+IID    c1e8c83e-845d-4d95-81db-e283fdffc000
+CoCreateInstance ctx = 0x17   ->   Init(0)   ->   AddAndSelectTheme(path, PACK_SILENT)
+PACK_SILENT = 1 << 2
+```
+
+Reglas de uso, todas con evidencia:
+
+- **Thread STA obligatorio.**
+- Corre en **contexto de usuario** (RunOnce del hive DEFAULT), no offline.
+- **NO hace falta** broadcast `ImmersiveColorSet` ni reiniciar Explorer.
+- `AddAndSelectTheme` y **no** `SetCurrentTheme(idx)`: toma un PATH y no depende de
+  matchear un `DisplayName` localizado ("Windows (dark)" vs "Windows (oscuro)").
+- **TRAMPA CRITICA -- no-op silencioso:** si el `.theme` es "el mismo" que el actual,
+  Windows **no hace nada y devuelve `hr=0`**. Hay que darle un `ThemeId` GUID **nuevo** y
+  un nombre de archivo distinto en cada build, o el segundo intento no aplica nada y el
+  codigo de retorno miente. AutoDarkMode resuelve lo mismo nudgeando +-1 un canal.
+- `AutoColorization=0` en el `.theme` es **obligatorio**: si no, Windows recalcula el
+  acento a partir del wallpaper y pisa el color elegido.
+
+**Descartado con evidencia:** `rundll32 ... desk.cpl desk,@Themes /Action:OpenTheme`
+(= `ITheme::OpenTheme`) **ignora el flag silencioso y abre la UI**. El propio codigo de
+AutoDarkMode lo comenta: *"This does not work"*.
+
+**Descartado:** bajar a los ordinales no documentados de `uxtheme.dll`
+(`RefreshImmersiveColorPolicyState` y companhia). Medido: el mapeo de ordinales que circula
+**no se sostiene** en 22631 (los ord 49 y 138 devolvieron lo contrario a lo esperado). Y
+no hace falta.
+
+### 2.7 El truco del alto contraste: NO USARLO
+
+Aplicar un tema de alto contraste y volver al default SI fuerza el ciclo de apply -- asi
+fue como el usuario logro ver el modo oscuro. Pero tiene tres efectos colaterales que
+arruinan justamente lo que queremos:
+
+1. blanquea `CurrentTheme`,
+2. fuerza el wallpaper a un color solido y no siempre lo devuelve,
+3. pone **`AutoColorization=1`**, o sea Windows recalcula el acento desde el wallpaper.
+
+El apply de 2.6 consigue lo mismo sin ningun dano.
+
+### 2.8 El acento exacto: `AccentPalette` se escribe DESPUES del apply
+
+**MEDIDO:** con `ColorizationColor=0XC414B8A6` (teal `#14B8A6`), `AccentColor` queda exacto
+pero **`AccentPalette[3]` sale `#008979`**: Windows normaliza el color a su rampa de
+luminancias. Si se quiere el teal exacto en Start y taskbar, hay que escribir
+`AccentPalette` a mano **despues** del apply (probado: sobrevive).
+
+**NO intentes derivar los 8 tonos con una formula:** no hay algoritmo publicado exacto.
+Se hardcodea la rampa o se acepta la normalizacion de Windows.
+
+Sobre el alpha de cada entrada: es padding a efectos practicos. Settings escribe `0x00`,
+el motor de temas a veces `0xFF`, WinPaletter siempre `255`, y funciona igual.
+
+### 2.9 Ojo con los falsos positivos de la comunidad
+
+Circulan hilos que dicen "en 25H2 el modo oscuro se revierte solo a los 5 segundos".
+**No es del sistema operativo:** es PowerToys 0.95.0 *Light Switch*, arreglado en 0.95.1.
+No perder una sesion con eso.
+
+### 2.10 CUATRO trampas mas, todas MEDIDAS y todas activas en los builds fallidos
+
+Bisecadas en una maquina real. Cada una fallaba EN SILENCIO, y dos de ellas explican por
+que el modo oscuro quedaba escrito en el registro pero la UI se dibujaba clara.
+
+**A. `AddAndSelectTheme` devuelve `E_FAIL` si el `.theme` no trae una linea `Wallpaper=`.**
+Bisecado byte a byte:
+
+```
+sin seccion [Control Panel\Desktop]      -> hr=0x80004005  E_FAIL
+seccion presente pero vacia              -> hr=0x80004005  E_FAIL
+seccion con solo Pattern=                -> hr=0x80004005  E_FAIL
+seccion con Wallpaper= (valor VACIO)     -> hr=0x00000000  OK
+seccion con Wallpaper=<ruta inexistente> -> hr=0x00000000  OK
+```
+
+La version anterior de la fase 10 omitia la seccion entera cuando no habia wallpaper
+propio, que es **el caso por defecto del proyecto**. O sea el apply fallaba siempre.
+**La seccion `[Control Panel\Desktop]` con una linea `Wallpaper=` va SIEMPRE.** Sin
+wallpaper propio se usa el de fabrica del modo (`img19.jpg` en Dark, `img0.jpg` en Light),
+que es lo que hacen `dark.theme` y `aero.theme`.
+
+Esto invalida la regla de la seccion 2.3 que decia "se omite la seccion completa si no hay
+wallpaper propio". NO se omite nunca.
+
+**B. `New-Item -Path <clave-del-registro> -Force` BORRA TODOS LOS VALORES de la clave si ya
+existe.** Comprobado: clave con 2 valores -> queda vacia.
+
+El script del primer login hacia `New-Item -Force` antes de cada `Set-ItemProperty`, asi
+que el item `acento-en-taskbar` (que escribe `ColorPrevalence` en
+`Themes\Personalize`) **le borraba el `AppsUseLightTheme` y el `SystemUsesLightTheme` que
+acababa de escribir `tema-oscuro`**. Y un valor AUSENTE significa CLARO.
+**Nuestro propio RunOnce borraba el modo oscuro.**
+Nunca uses `New-Item -Force` sobre una clave del registro que pueda existir: crea la clave
+solo si falta.
+
+**C. El no-op de Windows es por VALOR, no por tema.** La seccion 2.6 decia que alcanzaba
+con un `ThemeId` nuevo. No alcanza: se piso `AccentColor` dejando `ColorizationColor` bien,
+se reaplico, y `hr=0` con el modo corregido pero **el color NO**. Con `ThemeId` nuevo,
+igual. Por eso el apply necesita una cadena de tres niveles:
+
+1. apply del `.theme`,
+2. si el color no quedo: apply con `ThemeId` nuevo generado en runtime,
+3. si tampoco: escribir los 6 DWORD de color y el modo a mano (mismos numeros, mismo helper).
+
+**D. `[PreserveSig]` en la declaracion de `AddAndSelectTheme`.** Sin eso, un `E_FAIL` real
+llega como `COMException` y el `hr` que se loguea queda en `0xFFFFFFFF`: **el log miente
+justo donde mas importa.** Con `[PreserveSig]` se lee el HRESULT de verdad.
 
 ---
 

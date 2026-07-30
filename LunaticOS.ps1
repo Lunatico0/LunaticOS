@@ -729,7 +729,50 @@ function Invoke-SelfTest {
   #  Se mide la CLASE: si aparece un Stop-Process de explorer, TIENE que haber un
   #  bucle de relanzamiento en el mismo archivo.
   # ==========================================================================
+  # ==========================================================================
+  #  LEER EL CODIGO, NO LOS COMENTARIOS. Y NO ES UN DETALLE DE ESTILO.
+  #
+  #  scripts\10-personalizar.ps1 NOMBRA A PROPOSITO, en sus comentarios, cada bug
+  #  medido y cada tecnica descartada: 'InstallThemeDark', 'dark.theme',
+  #  'New-Item -Force', '/Action:OpenTheme', 'AutoColorization=1', 'uxtheme.dll'.
+  #  Esa evidencia documental SE QUEDA -- es la mitad del valor del archivo.
+  #
+  #  CONSECUENCIA: un test que grepea el archivo CRUDO da VERDE con el bug puesto,
+  #  porque el comentario que explica el bug le hace de coartada. Eso ya paso en
+  #  este repo y es la razon por la que existe esta seccion.
+  #
+  #  Get-CodeOnly saca los bloques <# #> y toda linea cuyo primer caracter no-blanco
+  #  sea '#' o '//'. Lo que queda es ESCRITURA DE CODIGO.
+  #  Get-HereStringBodies devuelve el texto de los here-string @'...'@, que es
+  #  literalmente el script del primer login: asi se lo puede auditar sin generarlo.
+  # ==========================================================================
+  function Get-CodeOnly([string]$Text) {
+    $t = [regex]::Replace("$Text", '(?s)<#.*?#>', '')
+    $keep = New-Object System.Collections.Generic.List[string]
+    foreach ($l in ($t -split "`r?`n")) {
+      $tr = "$l".TrimStart()
+      if ($tr.StartsWith('#') -or $tr.StartsWith('//')) { continue }
+      $keep.Add("$l")
+    }
+    return ($keep -join "`n")
+  }
+  function Get-HereStringBodies([string]$Text) {
+    $out = New-Object System.Collections.Generic.List[string]
+    foreach ($m in [regex]::Matches("$Text", "(?s)@'\r?\n(.*?)\r?\n'@")) { $out.Add($m.Groups[1].Value) }
+    return ($out -join "`n")
+  }
+
   $f10 = Get-Content (Join-Path $root 'scripts\10-personalizar.ps1') -Raw
+  $f10Code = Get-CodeOnly $f10            # la fase, SIN comentarios (los de los dos niveles)
+  $genRaw  = Get-HereStringBodies $f10    # el texto del script del primer login
+  $genCode = Get-CodeOnly $genRaw         # ...y ese, sin SUS comentarios
+  # Si la extraccion falla, TODO lo que viene abajo daria verde por vacio. Eso seria
+  # el peor de los mundos: un instrumento roto que informa exito. Se mide primero.
+  Chk 'pude aislar el CODIGO de la fase 10 (sin comentarios)' ($f10Code.Length -gt 4000) `
+      "-> quedaron $($f10Code.Length) chars: la extraccion se rompio y los tests de abajo no miden nada"
+  Chk 'pude aislar el script del PRIMER LOGIN de los here-string' ($genCode.Length -gt 2000) `
+      "-> quedaron $($genCode.Length) chars: sin el texto generado, los tests del apply no miden nada"
+
   $mata    = $f10 -match "Stop-Process[^\r\n]*explorer"
   $relanza = $f10 -match "(?s)Stop-Process[^\r\n]*explorer.{0,600}?(for|while)\s*\("
   Chk 'si la fase 10 mata explorer, tiene bucle de relanzamiento' `
@@ -737,18 +780,62 @@ function Invoke-SelfTest {
   Chk 'la fase 10 refresca con el broadcast ImmersiveColorSet' ($f10 -match 'ImmersiveColorSet')
 
   # ==========================================================================
-  #  El .theme y el InstallTheme: la causa raiz de "el OOBE pisa el tema".
-  #  Windows aplica el tema que dice HKLM\...\Themes\InstallTheme al crear el
-  #  perfil, DESPUES de heredar NTUSER.DAT. Si InstallTheme no queda escrito en
-  #  las DOS ramas, por la que falte vuelve el aero.theme (Light + azul) y el bug
-  #  es SILENCIOSO.
+  #  SON TRES CLAVES, NO DOS: InstallThemeDark ERA EL BUG (contrato 2.5).
+  #
+  #  Al crear el perfil, Windows APLICA un tema, y cual lo dicen TRES valores:
+  #      InstallTheme       rama generica
+  #      InstallThemeDark   <-- esta NO se escribia
+  #      InstallThemeLight
+  #  x DOS ramas del hive (Themes y WOW6432Node) = 6 valores.
+  #
+  #  MEDIDO en la VM del build 2026-07-29 20:32: el hive DEFAULT ya traia
+  #  AppsUseLightTheme=0, asi que Windows entro por la rama DARK, aplico el
+  #  dark.theme DE FABRICA (ColorizationColor=0XC40078D4, el azul) y nuestro tema
+  #  parecio ignorado. No se ignoro: SE APLICO OTRO.
+  #
+  #  EL TEST MIDE LA CLASE, no la clave que nos mordio: pide las TRES por separado
+  #  y nombra la que falte. El test viejo pedia dos y daba verde con el bug puesto.
+  #  Y corre sobre $f10Code: el archivo NOMBRA InstallThemeDark en sus comentarios,
+  #  asi que un grep crudo pasaria igual con la escritura borrada.
   # ==========================================================================
-  Chk 'la fase 10 escribe InstallTheme'      ($f10 -match '/v\s+InstallTheme')
-  Chk 'la fase 10 escribe InstallThemeLight' ($f10 -match '/v\s+InstallThemeLight')
-  Chk 'la fase 10 cubre la rama WOW6432Node' ($f10 -match 'WOW6432Node')
+  $itNames = @([regex]::Matches($f10Code, '/v\s+(InstallTheme\w*)') |
+                 ForEach-Object { $_.Groups[1].Value } | Sort-Object -Unique)
+  foreach ($n in @('InstallTheme', 'InstallThemeDark', 'InstallThemeLight')) {
+    Chk "la fase 10 ESCRIBE $n (codigo, no comentario)" ($itNames -contains $n) `
+        "-> por esa rama Windows aplica su tema DE FABRICA y vuelve el color de fabrica, EN SILENCIO"
+  }
+  $itRamas = @([regex]::Matches($f10Code, "'((?:WOW6432Node\\)?Microsoft\\Windows\\CurrentVersion\\Themes)'") |
+                 ForEach-Object { $_.Groups[1].Value } | Sort-Object -Unique)
+  Chk 'la fase 10 cubre las DOS ramas del hive (Themes y WOW6432Node)' ($itRamas.Count -eq 2) `
+      ("-> ramas vistas: " + ($itRamas -join ', '))
+  Chk 'InstallTheme* x ramas = 6 valores' (($itNames.Count * $itRamas.Count) -ge 6) `
+      "-> $($itNames.Count) claves x $($itRamas.Count) ramas = $($itNames.Count * $itRamas.Count), y son 6"
+  # Y las TRES tienen que escribirse SOBRE LA MISMA RUTA BASE. Si una queda afuera del
+  # loop de ramas, su clave pasa a ser otra expresion: se escribe en UNA sola rama y el
+  # bug vuelve a ser silencioso. Esto se mide comparando las expresiones, no contando
+  # lineas ni midiendo distancias en el archivo (eso se rompe al reordenar el codigo).
+  $itKeyExprs = @([regex]::Matches($f10Code, 'add\s+(\S+)\s+/v\s+InstallTheme\w*\b') |
+                    ForEach-Object { $_.Groups[1].Value } | Sort-Object -Unique)
+  Chk 'las tres InstallTheme* se escriben sobre la MISMA ruta base' ($itKeyExprs.Count -eq 1) `
+      ("-> rutas distintas: " + ($itKeyExprs -join ' , ') + "  == alguna se escribe en UNA sola rama")
+  Chk 'la rama de InstallTheme* la aporta una VARIABLE (el loop), no una ruta hardcodeada' `
+      (($itKeyExprs.Count -eq 1) -and ($itKeyExprs[0] -match '\$\w+\\\$\w+')) `
+      ("-> la ruta es " + ($itKeyExprs -join ' , ') + ": si es fija, solo cubre una de las dos ramas")
+  # Ninguna puede apuntar a un tema de fabrica: ahi esta el azul.
+  $itFabrica = @()
+  foreach ($m in [regex]::Matches($f10Code, '/v\s+(InstallTheme\w*)[^\r\n]*?/d\s+(\S+)')) {
+    if ($m.Groups[2].Value -match '(?i)(aero|dark)\.theme') {
+      $itFabrica += ("{0} -> {1}" -f $m.Groups[1].Value, $m.Groups[2].Value)
+    }
+  }
+  Chk 'ninguna clave InstallTheme* apunta a un .theme de fabrica' ($itFabrica.Count -eq 0) `
+      ("-> " + ($itFabrica -join ', '))
+
   # Y el .theme generado tiene que ser un .theme de verdad. Se pide a la funcion real.
   . (Join-Path $root 'scripts\10-personalizar.ps1')
-  if (Get-Command New-LunaticOSTheme -ErrorAction SilentlyContinue) {
+  if (-not (Get-Command New-LunaticOSTheme -ErrorAction SilentlyContinue)) {
+    Chk 'la fase 10 expone New-LunaticOSTheme para poder testearla' $false
+  } else {
     $th = New-LunaticOSTheme -Mode 'Dark' -ThemeColor $c.ThemeColor -WallpaperName 'x.jpg'
     Chk '.theme: seccion [Theme]'        ($th -match '(?m)^\[Theme\]')
     Chk '.theme: seccion [VisualStyles]' ($th -match '(?m)^\[VisualStyles\]')
@@ -764,9 +851,193 @@ function Invoke-SelfTest {
     # Sin tema, sin color y sin wallpaper NO se genera nada: no hay que tocar
     # InstallTheme para no romper el default de Windows sin motivo.
     Chk '.theme: sin nada elegido no se genera' ($null -eq (New-LunaticOSTheme))
-  } else {
-    Chk 'la fase 10 expone New-LunaticOSTheme para poder testearla' $false
+
+    # ========================================================================
+    #  EL .theme SIEMPRE TRAE UNA LINEA Wallpaper= (contrato 2.10-A).
+    #
+    #  BISECADO byte a byte en Win11 22631 contra AddAndSelectTheme:
+    #      sin seccion [Control Panel\Desktop]      -> hr=0x80004005  E_FAIL
+    #      seccion presente pero vacia              -> hr=0x80004005  E_FAIL
+    #      seccion con solo Pattern=                -> hr=0x80004005  E_FAIL
+    #      seccion con Wallpaper= (valor VACIO)     -> hr=0x00000000  OK
+    #  Sin esa clave el motor de temas RECHAZA el archivo entero: no aplica NI el
+    #  modo NI el color. Y la version anterior omitia la seccion completa cuando no
+    #  habia wallpaper propio -- QUE ES EL CASO POR DEFECTO DEL PROYECTO. O sea que
+    #  el apply fallaba SIEMPRE, con un E_FAIL que nadie miraba.
+    #
+    #  Se piden LOS CUATRO casos, no el que nos mordio: la clase es "cualquier
+    #  combinacion que genere contenido tiene que traer la seccion y la linea".
+    # ========================================================================
+    $casosTheme = @(
+      @{ n = 'oscuro + acento + wallpaper propio'; a = @{ Mode = 'Dark'; ThemeColor = $c.ThemeColor; WallpaperName = 'fondo.jpg' } }
+      @{ n = 'oscuro SIN wallpaper propio';        a = @{ Mode = 'Dark'; ThemeColor = $c.ThemeColor } }
+      @{ n = 'solo acento (sin modo elegido)';     a = @{ ThemeColor = $c.ThemeColor } }
+      @{ n = 'nada elegido';                       a = @{} }
+    )
+    $conContenido = @(); $sinSeccion = @(); $sinWallpaper = @(); $wallpaperVacio = @()
+    foreach ($caso in $casosTheme) {
+      $sp = $caso.a
+      $tc = New-LunaticOSTheme @sp
+      if ($null -eq $tc) { continue }
+      $conContenido += $caso.n
+      if ($tc -notmatch '(?m)^\[Control Panel\\Desktop\]\r?$') { $sinSeccion += $caso.n }
+      $mw = [regex]::Match($tc, '(?m)^Wallpaper=(.*?)\r?$')
+      if (-not $mw.Success) { $sinWallpaper += $caso.n }
+      elseif (-not $mw.Groups[1].Value.Trim()) { $wallpaperVacio += $caso.n }
+    }
+    Chk '.theme: los 3 casos con contenido lo generan (y "nada elegido" no)' ($conContenido.Count -eq 3) `
+        ("-> generaron contenido: " + ($conContenido -join ' | '))
+    Chk '.theme: TODOS los casos traen la seccion [Control Panel\Desktop]' ($sinSeccion.Count -eq 0) `
+        ("-> sin seccion: " + ($sinSeccion -join ' | ') + "  == AddAndSelectTheme devuelve E_FAIL 0x80004005")
+    Chk '.theme: TODOS los casos traen una linea Wallpaper=' ($sinWallpaper.Count -eq 0) `
+        ("-> sin Wallpaper=: " + ($sinWallpaper -join ' | ') + "  == el motor de temas RECHAZA el archivo entero")
+    Chk '.theme: la linea Wallpaper= nunca queda vacia' ($wallpaperVacio.Count -eq 0) `
+        ("-> vacia en: " + ($wallpaperVacio -join ' | ') + "  == escritorio en NEGRO cuando Windows aplica el tema al crear el perfil")
+
+    # ========================================================================
+    #  AutoColorization=0 ES OBLIGATORIO con acento (contrato 2.6).
+    #  Sin eso Windows recalcula el acento A PARTIR DEL WALLPAPER y pisa el color
+    #  elegido -- que es exactamente el dano colateral del truco del alto contraste.
+    # ========================================================================
+    $thAcc = New-LunaticOSTheme -Mode 'Dark' -ThemeColor $c.ThemeColor
+    $thSin = New-LunaticOSTheme -Mode 'Dark'
+    Chk '.theme: con acento trae AutoColorization=0' ($thAcc -match '(?m)^AutoColorization=0\r?$') `
+        '-> sin eso Windows recalcula el acento desde el wallpaper y pisa el color elegido'
+    Chk '.theme: NUNCA trae AutoColorization=1' `
+        (($thAcc -notmatch 'AutoColorization\s*=\s*1') -and ($thSin -notmatch 'AutoColorization\s*=\s*1'))
+    Chk '.theme: sin acento no declara ColorizationColor (Windows usa su default)' `
+        ($thSin -notmatch '(?m)^ColorizationColor=')
+
+    # ========================================================================
+    #  ThemeId: GUID NUEVO en cada llamada (contrato 2.6, trampa del no-op).
+    #  Si el .theme que se aplica es "el mismo" que el vigente, Windows NO HACE NADA
+    #  y devuelve hr=0. Un codigo de retorno que miente es lo peor que nos puede
+    #  pasar: los dos builds fallidos se veian igual de exitosos en el log.
+    # ========================================================================
+    $ta = New-LunaticOSTheme -Mode 'Dark' -ThemeColor $c.ThemeColor
+    $tb = New-LunaticOSTheme -Mode 'Dark' -ThemeColor $c.ThemeColor
+    $secTheme = [regex]::Match($ta, "(?s)\[Theme\]\r?\n(.*?)(?:\r?\n\[|$)").Groups[1].Value
+    Chk '.theme: ThemeId esta DENTRO de la seccion [Theme]' `
+        ($secTheme -match '(?m)^ThemeId=\{[0-9A-F-]{36}\}\r?$') "-> [Theme] dice: $($secTheme -replace "`r`n", ' / ')"
+    $ida = [regex]::Match($ta, 'ThemeId=(\{[^\}]+\})').Groups[1].Value
+    $idb = [regex]::Match($tb, 'ThemeId=(\{[^\}]+\})').Groups[1].Value
+    Chk '.theme: el ThemeId CAMBIA entre dos llamadas (el no-op de Windows es real)' `
+        ($ida -and $idb -and ($ida -ne $idb)) "-> las dos llamadas dieron ${ida}: el segundo apply seria un no-op con hr=0"
   }
+
+  # ==========================================================================
+  #  NINGUN New-Item -Force PELADO SOBRE EL REGISTRO (contrato 2.10-B).
+  #
+  #  BUG REAL, medido, y estuvo ACTIVO en cada ISO: New-Item -Path <clave> -Force
+  #  sobre una clave QUE YA EXISTE la RECREA, o sea le BORRA TODOS LOS VALORES.
+  #  Comprobado: clave con 2 valores -> queda vacia.
+  #  Que hacia eso: el item 'acento-en-taskbar' (ColorPrevalence) recreaba
+  #  Themes\Personalize y se comia el AppsUseLightTheme y el SystemUsesLightTheme
+  #  que acababa de escribir 'tema-oscuro'. Y UN VALOR AUSENTE SIGNIFICA CLARO:
+  #  nuestro propio RunOnce apagaba el modo oscuro.
+  #
+  #  SE MIDE LA CLASE: cualquier New-Item con -Force que no sea del filesystem
+  #  (-ItemType Directory/File) y que no este guardado por un Test-Path en la misma
+  #  linea. No la linea exacta que arreglamos -- el bug de la vuelta pasada fue
+  #  justo ese: arreglar una instancia y dejar la otra cinco lineas mas abajo.
+  #  El scan cubre la fase Y el script generado: $f10Code contiene los dos.
+  # ==========================================================================
+  $niMal = @()
+  foreach ($m in [regex]::Matches($f10Code, '(?m)^[^\r\n]*New-Item[^\r\n]*$')) {
+    $l = "$($m.Value)"
+    if ($l -notmatch '-Force') { continue }
+    if ($l -match '-ItemType\s+(Directory|File)') { continue }   # filesystem, no registro
+    if ($l -match 'Test-Path') { continue }                      # guardado: crea SOLO si falta
+    $niMal += $l.Trim()
+  }
+  Chk 'ningun New-Item -Force sobre el registro sin guarda de Test-Path' ($niMal.Count -eq 0) `
+      ("-> " + ($niMal -join ' || ') + "  == le BORRA TODOS LOS VALORES a la clave si ya existe")
+
+  # ==========================================================================
+  #  EL APPLY DEL TEMA, EN EL SCRIPT GENERADO (contrato 2.6 y 2.10-D).
+  #
+  #  InstallTheme* es necesario pero NO suficiente: escribir valores no aplica nada.
+  #  Quien traduce registro -> colores es el motor de temas, y solo corre cuando se
+  #  APLICA un tema. El metodo esta MEDIDO: hr=0, 856 ms, no abre Settings.
+  #
+  #  [PreserveSig] no es cosmetico: sin eso un E_FAIL real llega como COMException,
+  #  el hr logueado queda en 0xFFFFFFFF y EL LOG MIENTE justo donde mas importa.
+  # ==========================================================================
+  Chk 'primer login: CLSID de IThemeManager2 (9324da94-...)' `
+      ($genCode -match '(?i)9324da94-50ec-4a14-a770-e90ca03e7c8f')
+  Chk 'primer login: IID de IThemeManager2 (c1e8c83e-...)' `
+      ($genCode -match '(?i)c1e8c83e-845d-4d95-81db-e283fdffc000')
+  Chk 'primer login: LLAMA a AddAndSelectTheme (no SetCurrentTheme, que matchea un nombre localizado)' `
+      ($genCode -match '\.AddAndSelectTheme\s*\(')
+  Chk 'primer login: AddAndSelectTheme declarado con [PreserveSig]' `
+      ($genCode -match '(?m)^[^\r\n]*\[PreserveSig\][^\r\n]*\bAddAndSelectTheme\b') `
+      '-> sin PreserveSig un E_FAIL real se loguea como 0xFFFFFFFF y EL LOG MIENTE'
+  Chk 'primer login: Init declarado con [PreserveSig]' `
+      ($genCode -match '(?m)^[^\r\n]*\[PreserveSig\][^\r\n]*\bInit\s*\(') `
+      '-> el log imprime el hr del Init: sin PreserveSig ese numero es inventado'
+  Chk 'primer login: el apply corre en un thread STA (el objeto COM lo EXIGE)' `
+      ($genCode -match 'SetApartmentState\s*\(\s*(\[?ApartmentState\]?::|ApartmentState\.)STA')
+  Chk 'primer login: reintenta con un ThemeId nuevo generado en runtime (el no-op es por VALOR)' `
+      ($genCode -match '(?s)ThemeId.{0,300}NewGuid|NewGuid.{0,300}ThemeId')
+  Chk 'primer login: VERIFICA el resultado contra el registro y no solo el hr' `
+      ($genCode -match '(?s)hr\s*-eq\s*0.{0,120}-not\s+\$?\w*[Oo]k|LunaticVerify')
+
+  # --- Las tecnicas DESCARTADAS CON EVIDENCIA no pueden reaparecer -----------
+  # Los comentarios de la fase 10 las nombran a proposito (es la evidencia de por que
+  # no se usan), asi que esto corre sobre $f10Code. Un grep crudo daria falso positivo:
+  # ya paso, y es exactamente el tipo de test que miente.
+  $descartadas = @(
+    @{ n = 'rundll32 desk.cpl /Action:OpenTheme -- IGNORA el flag silencioso y ABRE la UI'
+       rx = '(?i)Action\s*:\s*OpenTheme' }
+    @{ n = 'una llamada a ITheme::OpenTheme -- lo mismo: abre Settings'
+       rx = '\.OpenTheme\s*\(' }
+    @{ n = 'el truco del alto contraste -- pone AutoColorization=1 y recalcula el acento desde el wallpaper'
+       rx = '(?i)highcontrast|hc(white|black|1|2)\.theme|Ease of Access' }
+    @{ n = 'AutoColorization=1 -- Windows recalcula el acento desde el wallpaper y pisa el elegido'
+       rx = 'AutoColorization\s*=\s*1' }
+    @{ n = 'ordinales no documentados de uxtheme.dll -- MEDIDO: el mapeo que circula no se sostiene en 22631'
+       rx = '(?i)uxtheme' }
+  )
+  $usadas = @()
+  foreach ($t in $descartadas) { if ($f10Code -match $t.rx) { $usadas += $t.n } }
+  Chk 'la fase 10 no usa ninguna de las tecnicas descartadas con evidencia' ($usadas.Count -eq 0) `
+      ("-> " + ($usadas -join ' || '))
+
+  # ==========================================================================
+  #  AccentPalette: NO SE DERIVA CON UNA FORMULA (contrato 1.2 y 2.8).
+  #
+  #  No hay algoritmo publicado exacto para los 8 tonos, y el escalado lineal en RGB
+  #  que haciamos daba colores QUEMADOS que no coincidian con los que genera
+  #  Settings. Prueba de que ninguna formula de escalado puede estar bien: el idx 7
+  #  no es un tono del acento, es un color de enfasis aparte (#107C10 verde para un
+  #  gris, #881798 violeta para el teal).
+  #
+  #  Lo unico permitido: sobreescribir los bytes del INDICE BASE (12,13,14) de la
+  #  paleta que el motor de temas acaba de generar. Se mide la clase: cualquier
+  #  indice calculado, cualquier bucle sobre la paleta y cualquier factor de escala.
+  # ==========================================================================
+  $palBloque = ''
+  foreach ($b in [regex]::Matches($f10, "(?s)@'\r?\n(.*?)\r?\n'@")) {
+    if ($b.Groups[1].Value -match 'AccentPalette') { $palBloque += (Get-CodeOnly $b.Groups[1].Value) + "`n" }
+  }
+  Chk 'encontre el bloque de codigo que escribe AccentPalette' ($palBloque -match 'AccentPalette') `
+      '-> sin el bloque, los tres tests de abajo no miden nada'
+  $idxMal = @(); $idxCalc = @()
+  foreach ($m in [regex]::Matches($palBloque, '(\$\w+)\[([^\]]+)\]\s*=[^=]')) {
+    $i = $m.Groups[2].Value.Trim()
+    if ($i -notmatch '^\d+$') { $idxCalc += ("{0}[{1}]" -f $m.Groups[1].Value, $i); continue }
+    if (@('12', '13', '14') -notcontains $i) { $idxMal += ("{0}[{1}]" -f $m.Groups[1].Value, $i) }
+  }
+  Chk 'AccentPalette: solo se escriben los bytes del indice BASE (12,13,14)' ($idxMal.Count -eq 0) `
+      ("-> tambien escribe " + ($idxMal -join ', ') + ": eso es inventar tonos")
+  Chk 'AccentPalette: ni un indice CALCULADO (un indice variable es un bucle, o sea una formula)' `
+      ($idxCalc.Count -eq 0) ("-> " + ($idxCalc -join ', '))
+  $factores = @([regex]::Matches($palBloque, '\d*\.\d+') | ForEach-Object { $_.Value } | Sort-Object -Unique)
+  Chk 'AccentPalette: ni un factor de escala (el escalado lineal en RGB da colores quemados)' `
+      ($factores.Count -eq 0) ("-> factores: " + ($factores -join ', '))
+  Chk 'AccentPalette: no hay bucle que recorra los 8 tonos' `
+      ($palBloque -notmatch '(?i)\b(for|foreach)\s*\(|ForEach-Object') `
+      '-> un bucle sobre la paleta solo puede ser una formula: no existe una publicada'
 
   # ==========================================================================
   #  NINGUNA fase escribe lo que bloquea Settings (contrato, seccion 5.1).
