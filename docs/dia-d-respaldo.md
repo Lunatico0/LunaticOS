@@ -27,7 +27,7 @@ discos tiene etiqueta** (solo E: dice "Local Disk"). Los dos puntos importan mas
 Sin etiqueta, cuando reconectes los discos y las letras cambien, no vas a tener forma
 rapida de saber cual es cual. Con etiqueta lo ves de un vistazo en el Explorador.
 
-- [ ] Correr en PowerShell **como Administrador**:
+- [x] Correr en PowerShell **como Administrador**:
   ```powershell
   Set-Volume -DriveLetter D -NewFileSystemLabel "DATOS-HDD"
   Set-Volume -DriveLetter E -NewFileSystemLabel "TRABAJO-SSD"
@@ -35,7 +35,7 @@ rapida de saber cual es cual. Con etiqueta lo ves de un vistazo en el Explorador
 
 ### 1.2 Anotar el mapa de discos y particiones
 
-- [ ] Guardar la foto del estado actual **en D: o E:**, no en C::
+- [x] Guardar la foto del estado actual **en D: o E:**, no en C::
   ```powershell
   New-Item -ItemType Directory -Force -Path "E:\_migracion" | Out-Null
   Get-Disk | Format-List > "E:\_migracion\discos.txt"
@@ -54,12 +54,12 @@ Downloads  -> D:\Downloads        Music     -> D:\Music
 Pictures   -> D:\Pictures         Videos    -> D:\Videos
 ```
 
-- [ ] Exportar las dos claves que las definen:
+- [x] Exportar las dos claves que las definen:
   ```powershell
   reg export "HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\User Shell Folders" "E:\_migracion\user-shell-folders.reg" /y
   reg export "HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\Shell Folders" "E:\_migracion\shell-folders.reg" /y
   ```
-- [ ] **NO importes esos .reg despues sin leerlos.** El usuario nuevo puede llamarse
+- [x] **NO importes esos .reg despues sin leerlos.** El usuario nuevo puede llamarse
       distinto y las rutas de AppData no van a coincidir. Sirven como **referencia**
       para rehacer la redireccion a mano (paso 3.3).
 
@@ -119,19 +119,36 @@ regenera. Lo que si conviene:
 - [ ] Si tenes **maquinas virtuales** en C:, acordate de que estan ahi. Las de este
       proyecto (`LunaticOS-Test`, `Debloat-Test`) son descartables.
 
-### 1.7 Licencia de Windows
+### 1.7 Licencia de Windows — EL PASO MAS URGENTE, y hay que hacerlo HOY
 
-Tu Windows es **Retail, activado, con licencia digital** (la clave que tiene puesta es
-la generica publica: lo que activa es el hardware, no la clave).
+**Confirmaste que vas a cambiar la placa.** Eso cambia todo lo de la licencia.
 
-- [ ] **Si reinstalas en la MISMA placa:** se reactiva solo al conectarse a internet.
-      No tenes que hacer nada.
-- [ ] **Si cambias de placa (la Gigabyte):** iniciá sesion con tu **cuenta Microsoft**
-      en este Windows ANTES de cambiarla, asi la licencia queda vinculada a la cuenta.
-      Despues del cambio: `Configuracion > Sistema > Activacion > Solucionar problemas
-      > Cambie el hardware de este dispositivo recientemente`.
+Tu Windows es **Retail, activado, con licencia digital**. La clave que tiene puesta es
+la generica publica: **lo que activa es el hardware, no la clave.** Y al cambiar la
+placa, ese hardware deja de existir.
+
+> **Cambiar la placa DESVINCULA la licencia digital.** Si no la vinculas a una cuenta
+> Microsoft ANTES, del otro lado no hay nada que recuperar: te queda pelearla con
+> soporte, y hay casos reales que terminan comprando una licencia nueva.
+>
+> **Esto se hace mientras esta maquina TODAVIA arranca y esta activada.** Despues del
+> cambio ya es tarde.
+
+- [ ] **HOY, antes de tocar la placa:** `Configuracion > Cuentas > Tu informacion >
+      Iniciar sesion con una cuenta Microsoft en su lugar`.
+- [ ] Verificar que quedo vinculada: `Configuracion > Sistema > Activacion` tiene que
+      decir **"Windows esta activado con una licencia digital vinculada a su cuenta
+      Microsoft"**. Si dice solo "licencia digital" **sin** la parte de la cuenta,
+      **no esta vinculada todavia.**
+- [ ] Anotar con que cuenta Microsoft la vinculaste. Sin esa cuenta el vinculo no sirve.
+- [ ] **Despues del cambio de placa**, si no activa solo: `Configuracion > Sistema >
+      Activacion > Solucionar problemas > Cambie el hardware de este dispositivo
+      recientemente` → iniciar sesion → elegir esta PC.
 - [ ] **No pongas nada en `clave-windows.txt`** de LunaticOS: no tenes una clave propia
       que poner, y la generica ya esta por defecto.
+
+Si preferis volver a cuenta local despues de instalar, se puede: el vinculo de la
+licencia queda hecho igual. Primero vincula, despues decidis como te logueas.
 
 ### 1.8 Ultimo chequeo antes de apagar
 
