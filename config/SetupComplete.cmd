@@ -80,6 +80,23 @@ REM     Orden actual:  AA personalizar -> AB limpiar Edge -> ZZ instalar program
 reg add "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\RunOnce" /v ABLunaticOSLimpiarEdge /t REG_SZ ^
   /d "cmd.exe /c \"%SystemRoot%\Setup\Scripts\limpiar-edge.cmd\"" /f >nul 2>&1
 
+REM ============================================================================
+REM  --- Servicios que el ACL no dejo tocar offline ---
+REM
+REM  La fase 4 deshabilita los servicios escribiendo Start=4 en el hive SYSTEM
+REM  montado. Algunos servicios NIEGAN esa escritura por ACL, incluso offline:
+REM  medido con TrkWks, que quedaba en Start=2 (Automatic) y CORRIENDO. El log de la
+REM  fase lo avisaba, pero ahi moria el asunto y nadie lo reintentaba.
+REM
+REM  Aca somos SYSTEM, que SI tiene FullControl sobre esas claves, asi que este es
+REM  el lugar donde se puede. El .cmd lo genera la fase 4 con la lista de los que le
+REM  fallaron; si no fallo ninguno, el archivo no existe y esto no hace nada.
+REM  Deja su resultado en %ProgramData%\LunaticOS\servicios.log
+REM ============================================================================
+if exist "%SystemRoot%\Setup\Scripts\lunaticos-servicios.cmd" (
+  call "%SystemRoot%\Setup\Scripts\lunaticos-servicios.cmd"
+)
+
 REM --- Autolimpieza ---
 del "%~f0" >nul 2>&1
 exit /b 0

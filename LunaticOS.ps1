@@ -1168,6 +1168,58 @@ function Invoke-SelfTest {
   }
 
   # ==========================================================================
+  #  REGRESION: UN SCRIPT DOT-SOURCEADO PISA LOS PARAMETROS DEL QUE LO LLAMA.
+  #
+  #  Un script dot-sourceado corre en el scope del llamador, asi que su bloque
+  #  param() BINDEA SUS DEFAULTS ahi. Si los dos declaran un parametro con el mismo
+  #  nombre, el del llamador queda con el DEFAULT DEL OTRO, aunque se lo hayan
+  #  pasado explicito.
+  #
+  #  PASO DOS VECES:
+  #    1) $VMName: verify-live.ps1 dot-sourcea test-vm.ps1, que declara
+  #       [string]$VMName = 'LunaticOS-Test'. Con el mismo default el bug es
+  #       INVISIBLE, y el sintoma seria "verifique la VM equivocada y dije OK".
+  #    2) $ProfilePath: se le agrego ese parametro a test-vm.ps1 y piso el de
+  #       verify-live.ps1 con ''. Sintoma: comparaba contra el perfil del USUARIO en
+  #       vez del que se le pasaba, y reporto en rojo 3 servicios que el perfil de
+  #       test no pedia. Tres FALLA inventadas, y la trampa estaba DOCUMENTADA en el
+  #       propio archivo.
+  #
+  #  Este test mide la CLASE: por cada script que dot-sourcea a otro, ningun nombre
+  #  de parametro puede repetirse, salvo que el llamador copie el valor ANTES del
+  #  dot-source (que es la unica defensa que funciona).
+  # ==========================================================================
+  function Get-ParamNames([string]$Path) {
+    if (-not (Test-Path $Path)) { return @() }
+    $ast = [System.Management.Automation.Language.Parser]::ParseFile($Path, [ref]$null, [ref]$null)
+    if (-not $ast -or -not $ast.ParamBlock) { return @() }
+    return @($ast.ParamBlock.Parameters | ForEach-Object { $_.Name.VariablePath.UserPath })
+  }
+
+  $choques = @()
+  foreach ($f in (Get-ChildItem (Join-Path $root 'scripts') -Filter '*.ps1' -File)) {
+    $txt = Get-Content $f.FullName -Raw
+    $mios = @(Get-ParamNames $f.FullName)
+    if ($mios.Count -eq 0) { continue }
+    # A quien dot-sourcea: `. "$PSScriptRoot\otro.ps1"`
+    foreach ($m in [regex]::Matches($txt, '(?m)^\s*\.\s+"\$PSScriptRoot\\([A-Za-z0-9\-\.]+\.ps1)"')) {
+      $otro = Join-Path (Join-Path $root 'scripts') $m.Groups[1].Value
+      foreach ($p in (Get-ParamNames $otro)) {
+        if ($mios -notcontains $p) { continue }
+        # La defensa valida: copiar el valor a otra variable ANTES del dot-source.
+        # Se busca una asignacion `$Algo = $Param` en el archivo del llamador.
+        $copiado = $txt -match ('\$\w+\s*=\s*\$' + [regex]::Escape($p) + '\s*(\r?\n|;|#)')
+        if (-not $copiado) {
+          $choques += ("{0} dot-sourcea {1} y los dos declaran -{2} (sin copia previa)" -f `
+                       $f.Name, $m.Groups[1].Value, $p)
+        }
+      }
+    }
+  }
+  Chk 'ningun parametro se pisa por dot-source sin copiarlo antes' ($choques.Count -eq 0) `
+      ("-> " + ($choques -join ' | '))
+
+  # ==========================================================================
   #  Los .ps1 tienen que ser ASCII puro: PowerShell 5.1 lee los .ps1 sin BOM como
   #  ANSI, y cualquier caracter no-ASCII sale como basura en la consola. En un
   #  comentario es cosmetico; en un string que se imprime, lo ve el usuario.

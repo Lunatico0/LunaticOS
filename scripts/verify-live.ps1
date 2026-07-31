@@ -132,10 +132,25 @@ param(
 #
 #  Por eso los parametros se copian ANTES del dot-source y de ahi en adelante se usan
 #  SOLO las copias. No uses $VMName mas abajo.
+#
+#  --------------------------------------------------------------------------
+#  Y VOLVIO A PASAR, con $ProfilePath (2026-07-30). La trampa estaba escrita aca
+#  arriba y aun asi se activo: se le agrego un parametro -ProfilePath a
+#  test-vm.ps1, con el mismo nombre que el de este script, y el dot-source lo piso
+#  con su default ''. Sintoma: verify-live comparaba contra el perfil del USUARIO en
+#  vez del que se le pasaba, y reportaba en rojo 3 servicios que el perfil de test
+#  NO pedia deshabilitar. Tres FALLA inventadas.
+#
+#  LA LECCION: cada parametro nuevo de ESTE script necesita su copia aca abajo, y
+#  cada parametro nuevo en CUALQUIER script que se dot-sourcee mas abajo puede pisar
+#  uno de los mios si comparte el nombre. El self-test verifica esto: compara los
+#  nombres de los param de los scripts dot-sourceados contra los mios.
+#  --------------------------------------------------------------------------
 # ===========================================================================
-$LiveVM       = $VMName
-$LiveUser     = $User
-$LivePassword = $Password
+$LiveVM          = $VMName
+$LiveUser        = $User
+$LivePassword    = $Password
+$LiveProfilePath = $ProfilePath
 
 . "$PSScriptRoot\config.ps1"
 . "$PSScriptRoot\lib.ps1"
@@ -1079,8 +1094,14 @@ function Get-LiveServiceFindings {
   $out += New-LiveFinding 'info' ('el perfil pidio deshabilitar {0} servicio(s). Estado REAL (Get-Service, no el hive): ' -f @($Wants.Services).Count +
     ('{0} Disabled+Stopped, {1} mal, {2} inexistentes en esta instalacion' -f $ok.Count, ($malos.Count + $corriendo.Count), $noExiste.Count))
   foreach ($m in $malos) {
+    # NO se afirma la causa: desde el SO corriendo no se puede distinguir "el Start=4
+    # nunca se escribio" de "se escribio y algo lo piso". Decir "algo lo volvio a
+    # habilitar" es inventar la mitad del diagnostico, y eso ya nos mando a buscar un
+    # bug que no existia. Se dice QUE se midio y DONDE mirar para saber por que.
     $out += New-LiveFinding 'FALLA' ('{0}: el perfil pidio deshabilitarlo y NO esta Disabled. ' -f $m +
-      'Start=4 en el hive offline no garantiza esto: algo lo volvio a habilitar despues de instalar.')
+      'Start=4 en el hive offline no garantiza el estado real. Para saber la causa: ' +
+      'mira la fase 4 en work\logs\build-*.log (si dice PROTEGIDO/access denied, el ACL del ' +
+      'registro no dejo escribirlo ni offline) y el Start de la clave en el disco.')
   }
   foreach ($m in $corriendo) {
     $out += New-LiveFinding 'OJO' ('{0}: esta Disabled y aun asi no figura detenido. Miralo a mano.' -f $m)
@@ -1639,7 +1660,15 @@ Invoke-Command -VMName $VMName -Credential $Cred -ScriptBlock {
                   $script:GuestInfo.ComputerName, $script:GuestInfo.User, $script:GuestInfo.PsVersion) 'Green'
 
   # --- que pidio el perfil (host) ---
-  $wants = Get-LiveProfileWants -Path $ProfilePath
+  # SE LOGUEA DE QUE ARCHIVO SALE, y no es un detalle: este chequeo compara el SO
+  # real contra "lo que pidio el perfil", asi que si lee el perfil equivocado sus
+  # FALLA son inventadas. Paso: reporto 3 servicios en rojo que el perfil de test
+  # NO pedia, porque estaba leyendo el perfil del usuario. Un veredicto sin decir
+  # contra que compara no se puede auditar.
+  # $LiveProfilePath y NO $ProfilePath: el dot-source de test-vm.ps1 pisa $ProfilePath
+  # con su default. Ver la trampa documentada arriba del primer dot-source.
+  $wants = Get-LiveProfileWants -Path $LiveProfilePath
+  Write-LiveLine ("   perfil de referencia: {0}" -f $(if ($LiveProfilePath) { $LiveProfilePath } else { (Join-Path $CFG.Root 'perfil.json') + '  (el del repo, no se paso -ProfilePath)' })) 'DarkGray'
   Write-LiveLine ("   el perfil pidio: tema={0} acento={1} wallpaper={2} appx-a-remover={3} servicios-a-deshabilitar={4} programas={5}" -f `
                   $(if ($wants.Mode) { $wants.Mode } else { '(sin eleccion)' }),
                   $(if ($wants.Accent) { $wants.Accent } else { '(ninguno)' }),
