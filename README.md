@@ -122,8 +122,18 @@ Requiere una VM Hyper-V **Gen2** llamada `Debloat-Test` (el script le pone Secur
 
 ### Instalar en la máquina real
 
-Seguí **[`docs/dia-d.md`](docs/dia-d.md)** — checklist completo: grabar el USB, qué tocar en la BIOS
-(Secure Boot + TPM son innegociables), qué esperar durante la instalación y cómo verificar el resultado.
+Arrancá por **[`TIMELINE.md`](TIMELINE.md)** — es el **orden de ejecución** de punta a punta, con
+marcas de en qué máquina se hace cada paso y dónde está el punto de no retorno. Los detalles del
+"por qué" viven en los documentos que referencia:
+
+| Documento | Para qué |
+|---|---|
+| **[`TIMELINE.md`](TIMELINE.md)** | El orden. Fase por fase, con estimaciones de tiempo. |
+| [`docs/dia-d.md`](docs/dia-d.md) | La instalación en sí y cómo verificar el resultado. |
+| [`docs/dia-d-respaldo.md`](docs/dia-d-respaldo.md) | No perder nada: respaldos, licencia, reconectar discos. |
+| [`docs/bios-update.md`](docs/bios-update.md) | Actualizar la BIOS con un solo pendrive (Q-Flash / Q-Flash Plus). |
+
+Secure Boot + TPM son innegociables: sin ellos Vanguard tira `VAN9001` y Valorant no abre.
 
 ### Grabar a USB
 

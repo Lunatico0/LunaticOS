@@ -60,40 +60,41 @@ pueden desconectar sin riesgo.
 
 ---
 
-## 🔴 Pendiente, en orden de urgencia real
+## ✅ Cerrado el 2026-07-31
 
-### 1. Licencia de Windows — HOY, no se puede posponer
+- Pasos **1.1, 1.2, 1.3** (etiquetas de disco, mapa de particiones, export de carpetas
+  redirigidas). El **1.4** (BitLocker) no requería acción: no hay cifrado.
+- 🔑 **Paso 1.7 — licencia digital VINCULADA a la cuenta Microsoft.** Verificado:
+  Activation state `Active` + *"activated with a digital license linked to your Microsoft
+  account"*. **Era el único paso con reloj corriendo. Ya no hay riesgo de perder la
+  licencia por el cambio de placa.**
+- **Respaldos automatizables corridos a `E:\_migracion`** (verificados, ninguno vacío):
+  `.claude` 776 MB / **6812 archivos completos**, `engram` 18 MB, `winget-export.json`,
+  `programas-instalados.txt`, `autoruns-hkcu/hklm.reg`, `.ssh`, `.gitconfig`.
+- **Hash de la ISO calculado** — 7,44 GB:
+  `2A5F4574BC7689DB92C5C922DAF01223B920B005936C4CFFFFB2D7B883E0CE32`
+- Repo publicado en <https://github.com/Lunatico0/LunaticOS>.
 
-`docs\dia-d-respaldo.md` **paso 1.7**. Es el único paso con una **ventana de tiempo que se
-cierra**: el Windows actual está activado por **licencia digital atada al hardware**.
-Cuando salga esa placa, si la licencia no quedó vinculada a una cuenta Microsoft **antes**,
-del otro lado **no hay nada que recuperar**.
+> ⚠️ `E:\_migracion\perfil\.ssh` contiene **claves privadas en texto plano**
+> (`id_github_personal`, `id_vela1`). Está fuera del repo, pero tratá esa carpeta como una
+> contraseña.
 
-Se hace mientras la máquina todavía arranca y está activada. Después es tarde.
-Verificación: Activación tiene que decir *"licencia digital **vinculada a su cuenta
-Microsoft**"*. Si dice solo "licencia digital", **no está vinculada**.
+## 🔴 Pendiente, en orden
 
-### 2. Pasar la ISO a la notebook — hoy también
+**El orden completo y ejecutable está en [`TIMELINE.md`](TIMELINE.md).** Resumen:
 
-Por red local, y **comparando `Get-FileHash -Algorithm SHA256`** de los dos lados. Si esto
-no se hace hoy, después hay que reconstruir la ISO de cero en la notebook con la PC
-principal ya desarmada.
-
-### 3. Respaldos 1.5 y 1.6
-
-`.claude` (782 MB) + `%LOCALAPPDATA%\engram`, claves SSH/GPG, `winget export`, autoruns.
-Estos sí pueden esperar unas horas: van a `E:\_migracion`, y **E: no se formatea**.
-
-### 4. Operativo BIOS + pendrive
-
-`docs\bios-update.md` — documento nuevo, completo, con los dos caminos de flasheo.
-
-### 5. Instalar
-
-`docs\dia-d-respaldo.md` PARTE 2 y 3 + `docs\dia-d.md`.
-
-**Ya está hecho y commiteado:** pasos 1.1, 1.2, 1.3 (etiquetas de disco, mapa de
-particiones, export de carpetas redirigidas). El 1.4 (BitLocker) no requería acción.
+1. **Pasar la ISO a la notebook** (7,44 GB, por red) y **verificar el hash**. Sin esto hay
+   que reconstruirla de cero con la PC principal ya desarmada.
+2. **Clonar el repo en la notebook** y llevar `E:\_migracion\claude\` si se quiere la
+   memoria completa de engram.
+3. **Respaldos manuales**: marcadores del navegador, configs de Macro Deck / SteelSeries /
+   Razer / Figma, VMs si importan. Y **repetir el robocopy de `.claude` + `engram` con
+   Claude Code CERRADO** (es incremental, tarda segundos).
+4. **Vaciar el pendrive** a `E:\pendrive-backup` y formatearlo **FAT32** con el firmware
+   como `gigabyte.bin` — `docs\bios-update.md`.
+5. **Desarmar, montar la placa, flashear, y RECIÉN DESPUÉS configurar Secure Boot + TPM.**
+6. **Notebook: grabar la ISO con Rufus** (no Ventoy).
+7. **Instalar** — `TIMELINE.md` fases 7 a 10.
 
 ---
 
@@ -127,6 +128,7 @@ Explorador ni por `diskpart`). Para los 58,7 GB del pendrive hay que usar **Rufu
 
 | Documento | Para qué |
 |---|---|
+| `TIMELINE.md` | **El orden de ejecución del día D.** Fase por fase, con puntos de no retorno. |
 | `docs\decisiones.md` | **El "por qué" de cada decisión técnica.** Empezá acá. |
 | `docs\bios-update.md` | Operativo de la BIOS y del pendrive. **Nuevo.** |
 | `docs\dia-d-respaldo.md` | No perder nada: respaldos, licencia, orden del día D. |

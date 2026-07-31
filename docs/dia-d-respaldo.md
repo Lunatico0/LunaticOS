@@ -134,17 +134,28 @@ placa, ese hardware deja de existir.
 > **Esto se hace mientras esta maquina TODAVIA arranca y esta activada.** Despues del
 > cambio ya es tarde.
 
-- [ ] **HOY, antes de tocar la placa:** `Configuracion > Cuentas > Tu informacion >
+- [x] **HOY, antes de tocar la placa:** `Configuracion > Cuentas > Tu informacion >
       Iniciar sesion con una cuenta Microsoft en su lugar`.
-- [ ] Verificar que quedo vinculada: `Configuracion > Sistema > Activacion` tiene que
+- [x] Verificar que quedo vinculada: `Configuracion > Sistema > Activacion` tiene que
       decir **"Windows esta activado con una licencia digital vinculada a su cuenta
       Microsoft"**. Si dice solo "licencia digital" **sin** la parte de la cuenta,
       **no esta vinculada todavia.**
-- [ ] Anotar con que cuenta Microsoft la vinculaste. Sin esa cuenta el vinculo no sirve.
+
+      > ✅ **VERIFICADO el 2026-07-31.** Activation state: **Active**, y el texto dice
+      > literalmente *"activated with a digital license **linked to your Microsoft
+      > account**"*. Este paso esta CERRADO — era el unico con reloj corriendo.
+
+- [x] Anotar con que cuenta Microsoft la vinculaste. Sin esa cuenta el vinculo no sirve.
+
+      > ⚠️ **La cuenta NO se escribe aca: este repo es PUBLICO.** Es la cuenta Microsoft
+      > que aparece arriba a la izquierda en `Configuracion` (perfil "Patricio Pittana").
+      > **No es** el mail de los commits de git — son dos cuentas distintas. Si no la
+      > tenes presente, miralo en `Configuracion > Cuentas` **antes** de desarmar.
+
 - [ ] **Despues del cambio de placa**, si no activa solo: `Configuracion > Sistema >
       Activacion > Solucionar problemas > Cambie el hardware de este dispositivo
       recientemente` → iniciar sesion → elegir esta PC.
-- [ ] **No pongas nada en `clave-windows.txt`** de LunaticOS: no tenes una clave propia
+- [x] **No pongas nada en `clave-windows.txt`** de LunaticOS: no tenes una clave propia
       que poner, y la generica ya esta por defecto.
 
 Si preferis volver a cuenta local despues de instalar, se puede: el vinculo de la
