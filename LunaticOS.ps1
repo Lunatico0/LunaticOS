@@ -192,7 +192,13 @@ function New-DefaultProfile {
     flags           = [ordered]@{}
     personalizacion = [ordered]@{}
     programas       = [ordered]@{}
-    usuario         = [ordered]@{ nombre = 'pato'; zona = 'Argentina Standard Time'; teclado = 'es-AR;en-US' }
+    # 'crear' decide si la ISO crea la cuenta local o si la pide el OOBE durante la
+    # instalacion. Default $true: es el comportamiento historico, y ademas el que NO
+    # deja al usuario peleando con la pantalla de cuenta Microsoft (ver la nota del
+    # item 'cuenta' en el menu). 'zona' y 'teclado' todavia NO se consumen: el
+    # autounattend los trae fijos. Estan declarados para no perder el dato, pero que
+    # nadie asuma que funcionan.
+    usuario         = [ordered]@{ crear = $true; nombre = 'pato'; zona = 'Argentina Standard Time'; teclado = 'es-AR;en-US' }
   }
   foreach ($i in Build-AppxCatalog)    { if (-not $i.Locked) { $p.appx[$i.Key] = [bool]$i.Rec } }
   foreach ($i in Build-ServiceCatalog) { $p.servicios[$i.Key] = [bool]$i.Rec }
@@ -222,6 +228,13 @@ function Import-Profile([string]$path) {
   }
   if ($raw.usuario) {
     foreach ($k in $raw.usuario.PSObject.Properties.Name) { $p.usuario[$k] = $raw.usuario.$k }
+    # Un perfil VIEJO no tiene 'crear' (se agrego despues). Sin este relleno quedaria
+    # en $null, que es falsy, y la ISO dejaria de crear la cuenta SIN QUE NADIE LO
+    # PIDIERA: el usuario se encontraria con el OOBE pidiendole cuenta Microsoft.
+    # Un campo nuevo que cambia el comportamiento de un perfil existente es una
+    # regresion silenciosa, y hay un test que lo verifica.
+    if ($null -eq $p.usuario['crear']) { $p.usuario['crear'] = $true }
+    $p.usuario['crear'] = [bool]$p.usuario['crear']
   }
   $p
 }
@@ -400,6 +413,8 @@ function Show-MainMenu($p) {
          Note='Todo se aplica como DEFAULT, no como policy: son un punto de partida y los cambias desde Settings cuando quieras.' }
       @{ Key='apps';  Label='6. Programas a instalar';          Info="$nApps marcados"
          Note='Se instalan solos por winget en el primer arranque (hace falta internet). Los drivers de GPU no estan en winget: te deja la lista con las URLs.' }
+      @{ Key='cuenta'; Label='7. Cuenta de usuario';            Info=$(if ([bool]$p.usuario['crear']) { "crear '$($p.usuario['nombre'])'" } else { 'la pide el OOBE' })
+         Note='Tu nombre de usuario. Si lo creas aca, el OOBE no pregunta nada. Si elegis que lo pida el OOBE, ojo: Windows 11 25H2 te va a empujar a cuenta Microsoft.' }
       @{ Key='-' }
       @{ Key='gen';   Label='G. GENERAR LA ISO (guarda el perfil)'; Info='~45-60 min'; Accent=$true
          Note='GUARDA el perfil.json y arranca el pipeline completo: rearma la imagen desde la ISO original. No cierres la consola.' }
@@ -427,6 +442,54 @@ function Show-MainMenu($p) {
       'flags' { [void](Show-TuiChecklist -Title '4. Opciones del sistema' -Items (Build-FlagCatalog) -Selected $p.flags -Legend 'marcado = activado') }
       'pers'  { [void](Show-TuiChecklist -Title '5. Personalizacion (todo reversible desde Settings)' -Items $PersonalizacionCatalog -Selected $p.personalizacion -Exclusive $PersonalizacionExclusivos -Legend 'default, NO policy: lo cambias cuando quieras') }
       'apps'  { [void](Show-TuiChecklist -Title '6. Programas a instalar en el primer arranque' -Items $AppCatalog -Selected $p.programas -Legend 'se instalan por winget al primer login') }
+      # ======================================================================
+      #  7. CUENTA DE USUARIO
+      #
+      #  El nombre estaba HARDCODEADO en el autounattend y el campo 'usuario' del
+      #  perfil no lo consumia nadie. Se elige ACA o no se elige nunca: renombrar una
+      #  cuenta de Windows despues deja la CARPETA del perfil con el nombre viejo
+      #  para siempre.
+      #
+      #  Y la opcion "que la pida el OOBE" tiene un costo que hay que MOSTRAR, no
+      #  esconder: Windows 11 24H2/25H2 ya no traen bypassnro.cmd (Microsoft lo saco),
+      #  asi que sin cuenta local en el unattend el OOBE exige cuenta Microsoft e
+      #  internet. La salida es Shift+F10 y `start ms-cxh:localonly`. Ofrecer la
+      #  opcion sin avisar eso es tenderle una trampa al usuario.
+      # ======================================================================
+      'cuenta' {
+        $actual = if ([bool]$p.usuario['crear']) { 'crear' } else { 'oobe' }
+        $elec = Show-TuiMenu -Subtitle '7. Cuenta de usuario' -Entries @(
+          @{ Key='crear'; Label='Crear la cuenta ahora (recomendado)'
+             Info=$(if ($actual -eq 'crear') { "actual: $($p.usuario['nombre'])" } else { '' })
+             Accent=($actual -eq 'crear')
+             Note='La ISO crea tu cuenta local y el OOBE no pregunta nada. Elegis el nombre en el paso siguiente.' }
+          @{ Key='oobe';  Label='Que la pida el OOBE al instalar'
+             Info=$(if ($actual -eq 'oobe') { 'actual' } else { '' })
+             Accent=($actual -eq 'oobe')
+             Note='OJO: Windows 11 25H2 va a EXIGIR cuenta Microsoft e internet. Para hacer cuenta local: Shift+F10 y escribir  start ms-cxh:localonly' }
+          @{ Key='-' }
+          @{ Key='volver'; Label='Volver sin cambiar nada'; Note='' }
+        )
+        if ($elec -eq 'crear') {
+          # El nombre se valida ANTES de que llegue a una ISO: un nombre invalido hace
+          # fallar la creacion de la cuenta durante la instalacion, y eso se descubre
+          # 40 minutos despues con el OOBE roto.
+          $nombre = Show-TuiInput -Title '7. Cuenta de usuario' -Prompt 'nombre' `
+                      -Default $p.usuario['nombre'] -MaxLen 20 `
+                      -Validate { param($s) Test-WindowsUserName $s } `
+                      -Advise   { param($s) Test-WindowsUserName $s -Advisory } `
+                      -Lines @(
+                        'Va a ser tu usuario de Windows y la carpeta C:\Users\<nombre>.',
+                        'ENTER sin escribir nada deja el que ya estaba.'
+                      )
+          if ($nombre) {
+            $p.usuario['nombre'] = $nombre
+            $p.usuario['crear']  = $true
+          }
+        } elseif ($elec -eq 'oobe') {
+          $p.usuario['crear'] = $false
+        }
+      }
       'gen'   { return 'gen' }
       'save'  { return 'save' }
       'quit'  { return 'quit' }
@@ -1257,6 +1320,42 @@ function Invoke-SelfTest {
   $p3 = Import-Profile $tmp
   Chk 'un perfil incompleto no rompe (rellena con defaults)' ($null -ne $p3 -and $p3.appx.Count -gt 0)
   Chk 'y respeta lo que si trae' ($p3.flags['RemoveOneDrive'] -eq $false)
+
+  # ==========================================================================
+  #  REGRESION: un perfil VIEJO no tiene 'usuario.crear'.
+  #  Sin relleno queda en $null, que es FALSY, y la ISO dejaria de crear la cuenta
+  #  SIN QUE NADIE LO PIDIERA: el usuario se encontraria con el OOBE exigiendole
+  #  cuenta Microsoft. Un campo nuevo que cambia el comportamiento de un perfil que
+  #  ya existia es una regresion silenciosa, y es la clase de cosa que se descubre
+  #  recien despues de instalar.
+  # ==========================================================================
+  '{ "version":1, "usuario": { "nombre": "juan" } }' | Set-Content $tmp -Encoding UTF8
+  $p5 = Import-Profile $tmp
+  Chk 'un perfil viejo sin usuario.crear se importa con crear=$true' `
+      ($null -ne $p5 -and $p5.usuario['crear'] -eq $true) `
+      "-> quedo en '$($p5.usuario['crear'])': la ISO no crearia la cuenta sin que nadie lo pida"
+  Chk 'y respeta el nombre que ese perfil viejo si traia' ($p5.usuario['nombre'] -eq 'juan')
+  # Y que 'crear:false' explicito se respete: si se pisara con el default, la opcion
+  # "que la pida el OOBE" no serviria para nada.
+  '{ "version":1, "usuario": { "crear": false, "nombre": "juan" } }' | Set-Content $tmp -Encoding UTF8
+  $p6 = Import-Profile $tmp
+  Chk 'un crear:false explicito NO se pisa con el default' ($p6.usuario['crear'] -eq $false)
+
+  # --- El nombre de usuario se valida antes de llegar a una ISO ---
+  Chk 'Test-WindowsUserName existe (la valida la TUI)' `
+      ($null -ne (Get-Command Test-WindowsUserName -ErrorAction SilentlyContinue))
+  if (Get-Command Test-WindowsUserName -ErrorAction SilentlyContinue) {
+    Chk 'un nombre normal pasa'            ($null -eq (Test-WindowsUserName 'pittana'))
+    Chk 'un caracter prohibido se rechaza' ($null -ne (Test-WindowsUserName 'pa|to'))
+    Chk 'un nombre reservado se rechaza'   ($null -ne (Test-WindowsUserName 'CON'))
+    Chk 'mas de 20 caracteres se rechaza'  ($null -ne (Test-WindowsUserName ('a' * 21)))
+    Chk 'vacio se rechaza'                 ($null -ne (Test-WindowsUserName ''))
+  }
+  # --- La fase 8 tiene su propio self-test de la inyeccion de cuenta ---
+  # Se llama en un proceso hijo porque esa fase ESCRIBE: no se puede dot-sourcear.
+  & powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $root 'scripts\08-inject-runtime.ps1') -SelfTest 2>&1 | Out-Null
+  Chk 'la fase 8 pasa su self-test de cuenta de usuario' ($LASTEXITCODE -eq 0) `
+      "-> exit $LASTEXITCODE. Corrio: scripts\08-inject-runtime.ps1 -SelfTest"
 
   # --- Perfil corrupto: tampoco debe romper ---
   'esto no es json {{{' | Set-Content $tmp -Encoding UTF8

@@ -146,8 +146,27 @@
       </OOBE>
       <!-- Cuenta local creada por el unattend: el OOBE nunca llega a pedir cuenta
            Microsoft. Password VACIO a proposito (no se hardcodea nada secreto en la
-           ISO); le ponés una desde Settings en el primer arranque si querés.
-           Para cambiar el usuario, editá Name y DisplayName. -->
+           ISO); le pones una desde Settings en el primer arranque si queres.
+
+           EL NOMBRE NO SE EDITA MAS ACA. Lo elige el usuario en la TUI (opcion 7) y
+           la fase 8 (scripts\08-inject-runtime.ps1) reemplaza Name y DisplayName
+           SOBRE UNA COPIA EN MEMORIA, igual que hace con la clave de producto. Este
+           archivo no se modifica nunca. El 'pato' del bloque que sigue es solo el
+           default para cuando la fase se corre a mano, sin perfil cargado (y si el
+           bloque no esta, es porque la fase 8 lo quito: lo explica el comentario
+           que dejo en su lugar).
+
+           Y SI EL PERFIL DICE usuario.crear = false, la fase 8 QUITA ESTE BLOQUE
+           ENTERO y tambien el HideLocalAccountScreen de arriba, para que el OOBE
+           muestre la pantalla de cuenta. Ese camino tiene un costo que la TUI y el
+           log avisan: Windows 11 24H2/25H2 ya no traen bypassnro.cmd, asi que sin
+           cuenta local el OOBE exige cuenta Microsoft e internet; para hacer una
+           local hay que apretar Shift+F10 y escribir  start ms-cxh:localonly
+
+           Se quita con el DOM, no con un reemplazo de texto: un reemplazo dejaria un
+           LocalAccounts huerfano colgado del component, que es el defecto D15 exacto
+           (hrResult = 0x80220001) y aborta la instalacion a mitad de camino. Las
+           guardas de la fase 8 rechazan las dos formas de quitarlo mal. -->
       <UserAccounts>
         <LocalAccounts>
           <LocalAccount wcm:action="add">

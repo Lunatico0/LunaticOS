@@ -513,3 +513,327 @@ function Show-TuiPause([string]$Message = 'Enter para continuar...') {
   Write-Host "  $Message" -ForegroundColor DarkGray
   do { $k = Get-TuiKey } while ($k.Key -ne 'Enter')
 }
+
+# ===========================================================================
+#  INPUT DE TEXTO -- lo unico que el usuario ESCRIBE en toda la herramienta
+# ===========================================================================
+<#
+  Show-TuiInput -- campo de texto de una linea, dentro del frame de la TUI.
+
+  Devuelve el string, o $null si el usuario cancelo con Esc.
+
+      $n = Show-TuiInput -Title 'Cuenta de usuario' -Prompt 'nombre' -Default 'pato' `
+                         -MaxLen 20 `
+                         -Validate { param($s) Test-WindowsUserName $s } `
+                         -Advise   { param($s) Test-WindowsUserName $s -Advisory }
+
+  POR QUE NO Read-Host -- dos razones y las dos importan:
+    1) Read-Host escribe SU prompt y SU eco donde esta el cursor. El frame de esta
+       TUI se redibuja posicionando el cursor en 0,0 (decision 2 del header), asi
+       que el eco de Read-Host queda pisado o pisa, y el frame siguiente sale
+       corrido;
+    2) Read-Host NO pasa por $Global:TuiKeyProvider. Este campo es el unico lugar
+       donde el usuario escribe algo que termina DENTRO del autounattend, y seria
+       justo el unico pedazo de la TUI que no se puede probar sin un humano
+       tipeando. Un nombre invalido no se descubre aca: se descubre 40 minutos
+       despues, con el OOBE roto.
+
+  DECISIONES (van escritas porque son las preguntas que se hace el que lee):
+
+  a) EL CAMPO ARRANCA VACIO y -Default es lo que devuelve "Enter sin escribir
+     nada". La alternativa era arrancar con el default ya tipeado: se descarto
+     porque entonces tipear 'juan' sobre 'pato' da 'patojuan', y tanto el usuario
+     como el test tendrian que acordarse de borrar primero (4 Backspace que nadie
+     documenta). Con el campo vacio, lo que se tipea es lo que queda y el default
+     sigue estando a un Enter de distancia. El frame lo dice: "(vacio = pato)".
+
+  b) ENTER CON EL CAMPO VACIO devuelve -Default. Si -Default esta vacio, NO
+     confirma: muestra el error abajo del campo y sigue esperando.
+
+  c) NUNCA DEVUELVE ''. Un llamador que escriba `if ($nombre) { ... }` no puede
+     distinguir '' de $null: "no escribio nada" y "cancelo con Esc" terminarian en
+     la misma rama por accidente. Hay exactamente dos salidas: un string no vacio,
+     o $null.
+
+  d) EL DEFAULT TAMBIEN SE VALIDA. Enter sobre el campo vacio pasa -Default por
+     -Validate como si lo hubiera tipeado el usuario. Si el llamador cablea un
+     default invalido, el error se ve en la TUI y no en la instalacion.
+
+  e) -Validate BLOQUEA, -Advise NO. Son dos canales porque la seccion 4 de
+     docs\contrato-cuenta-usuario.md pide las dos cosas: un nombre con un caracter
+     prohibido no se puede confirmar, y un nombre con espacios SI se puede
+     confirmar pero hay que avisar que la carpeta del perfil va a quedar con ese
+     nombre para siempre. Con un solo canal habria que inventar un prefijo magico
+     ('AVISO: ...') y parsearlo aca: un contrato invisible entre dos archivos.
+
+  f) LA ZONA DE MENSAJE MIDE SIEMPRE LO MISMO (2 lineas). Si creciera y se
+     encogiera con el largo del error, el footer -- y el frame entero -- se
+     moverian solos mientras el usuario tipea.
+#>
+function Show-TuiInput {
+  param(
+    [Parameter(Mandatory)][string]$Title,
+    # -Prompt es la ETIQUETA del campo ("nombre" dibuja "nombre: pato_"), no el
+    # texto explicativo: ese va en -Lines, que es multilinea y se wrappea.
+    [Parameter(Mandatory)][string]$Prompt,
+    [string]$Default = '',
+    [int]$MaxLen = 20,
+    [scriptblock]$Validate = $null,
+    [scriptblock]$Advise = $null,
+    [string[]]$Lines = @()
+  )
+
+  # Los dos guardas son contra errores del LLAMADOR, y tiran a proposito en la
+  # primera llamada: un -MaxLen de 0 deja un campo donde no se puede escribir nada
+  # y un -Default mas largo que -MaxLen hace que el frame prometa "(vacio = X)" con
+  # una X que -Validate va a rechazar. Fallar deterministicamente en el primer run
+  # le gana a una TUI que se porta raro en la maquina del usuario.
+  if ($MaxLen -lt 1) { throw "Show-TuiInput: -MaxLen tiene que ser 1 o mas (llego $MaxLen)." }
+  if ($Default.Length -gt $MaxLen) {
+    throw ("Show-TuiInput: -Default ('" + $Default + "', " + $Default.Length + " caracteres) no entra en " +
+           "-MaxLen " + $MaxLen + ": el frame prometeria un default que Enter no puede confirmar.")
+  }
+
+  $text = ''
+  # 3 lineas, igual que la nota de la checklist. MEDIDO: con 2 lineas el aviso mas
+  # largo (espacios + no-ASCII + un nombre de 20 caracteres) se cortaba y el frame
+  # se comia el final de la advertencia. Un aviso truncado es peor que ninguno:
+  # parece que la herramienta te dijo algo cuando en realidad no lo dijo. Ver (f).
+  $msgRows = 3
+
+  while ($true) {
+    # El layout ANTES de dibujar, como en la checklist: un resize a mitad de
+    # tipeo se acomoda en el redibujo siguiente. Se ASIGNA (no se llama pelado)
+    # porque el hashtable del layout se sumaria al valor de retorno de esta
+    # funcion, que aca no es un bool: es el nombre de la cuenta del usuario.
+    $lay = Update-TuiLayout
+    Reset-TuiCursor
+    Show-TuiHeader $Title
+
+    # $efectivo = lo que Enter confirmaria AHORA. Se valida ESTO y no $text: con el
+    # campo vacio y un default cargado, validar '' dibujaria "no puede estar vacio"
+    # debajo de un campo donde Enter SI funciona. Asi, el error que se ve es
+    # siempre el motivo exacto por el que Enter no confirma.
+    $efectivo = if ($text.Length -eq 0 -and $Default.Length -gt 0) { $Default } else { $text }
+
+    $err = $null
+    if ($efectivo.Length -eq 0) {
+      # Ver decision (c): '' no es un valor de retorno posible, asi que el campo
+      # vacio sin default es un error incluso sin -Validate.
+      $err = 'el campo no puede quedar vacio.'
+    } elseif ($Validate) {
+      # Un -Validate que TIRA no se puede llevar la TUI puesta a mitad de frame: se
+      # degrada a error (Enter bloqueado, Esc sigue saliendo) y se muestra el
+      # mensaje, que es mas de lo que se ve en un stack trace sobre el frame roto.
+      try { $err = & $Validate $efectivo }
+      catch { $err = 'la validacion fallo: ' + $_.Exception.Message }
+    }
+    $adv = $null
+    if (-not $err -and $Advise) {
+      try { $adv = & $Advise $efectivo } catch { $adv = $null }
+    }
+
+    Write-TuiLine ''
+    # Las lineas de contexto se WRAPPEAN (Write-TuiLine sola las recortaria y el
+    # aviso del OOBE se cortaria a la mitad) y se topean con las filas del layout:
+    # el frame tiene 13 lineas fijas (4 header + 3 blancos + campo + 3 de mensaje +
+    # 2 de footer), y 13 + $lay.Rows nunca pasa la altura de la consola porque Rows
+    # ya es Height - 15. Sin el tope, un -Lines largo scrollea el buffer y el
+    # SetCursorPosition(0,0) del frame siguiente dibuja corrido.
+    $ctx = @()
+    foreach ($l in $Lines) {
+      if ($l -eq '') { $ctx += '' } else { $ctx += @(Wrap-TuiText $l ($script:TuiWidth - 4)) }
+    }
+    if ($ctx.Count -gt $lay.Rows) { $ctx = @($ctx[0..($lay.Rows - 1)]) }
+    foreach ($l in $ctx) { Write-TuiLine ("  " + $l) 'White' }
+    Write-TuiLine ''
+
+    # El '_' final es el cursor: la consola real tiene el cursor fisico en 0,0
+    # (Reset-TuiCursor), asi que sin este caracter el usuario no ve donde escribe.
+    # El texto va como ARGUMENTO de -f y nunca dentro del formato: si el usuario
+    # tipea una llave, '{0}' no se reinterpreta.
+    $campo = "  {0}: {1}_" -f $Prompt, $text
+    if ($text.Length -eq 0 -and $Default.Length -gt 0) { $campo += "   (vacio = $Default)" }
+    else { $campo += ("   [{0}/{1}]" -f $text.Length, $MaxLen) }
+    Write-TuiLine $campo 'Yellow'
+    Write-TuiLine ''
+
+    $msg = ''; $col = 'DarkGray'
+    if     ($err) { $msg = 'ERROR: ' + $err; $col = 'Red' }
+    elseif ($adv) { $msg = 'AVISO: ' + $adv; $col = 'Yellow' }
+    $wrapped = @(Wrap-TuiText $msg ($script:TuiWidth - 4))
+    for ($i = 0; $i -lt $msgRows; $i++) {
+      if ($i -lt $wrapped.Count) { Write-TuiLine ("  " + $wrapped[$i]) $col } else { Write-TuiLine '' }
+    }
+
+    Show-TuiFooter @('ENTER confirmar   ESC cancelar sin elegir   BACKSPACE borrar')
+
+    $k = Get-TuiKey
+    switch ($k.Key) {
+      # Enter con error NO confirma y tampoco limpia nada: el frame siguiente
+      # vuelve a dibujar el mismo error. Es la seccion 3 del contrato.
+      'Enter'     { if (-not $err) { return $efectivo } }
+      'Escape'    { return $null }
+      'Backspace' { if ($text.Length -gt 0) { $text = $text.Substring(0, $text.Length - 1) } }
+      default {
+        # [char]::IsControl en vez de una lista de teclas a mano: saca Enter (13),
+        # Esc (27), Tab (9), Backspace (8), Delete (127) y TODAS las teclas sin
+        # KeyChar -- flechas, Home/End, las F -- que llegan con NUL (medido en
+        # ConvertTo-TuiKeyInfo y en la consola real). Una tecla de control nueva ya
+        # esta cubierta sin tocar esto.
+        # Los no-ASCII (acentos) SI entran: la seccion 4 del contrato pide
+        # advertir, no prohibir. Ver Test-WindowsUserName -Advisory.
+        $c = $k.KeyChar
+        if ((-not [char]::IsControl($c)) -and ($text.Length -lt $MaxLen)) { $text = $text + $c }
+      }
+    }
+  }
+}
+
+# ===========================================================================
+#  VALIDACION DEL NOMBRE DE CUENTA DE WINDOWS
+# ===========================================================================
+<#
+  Reglas de la seccion 4 de docs\contrato-cuenta-usuario.md. Vive aca, y no en
+  LunaticOS.ps1, porque es el -Validate de Show-TuiInput y tui.ps1 se dot-sourcea
+  antes que nada: asi la TUI y el self-test miran LA MISMA funcion. Que la
+  validacion viva en un lado y la que corre en la TUI sea otra copia es el camino
+  directo a "el test pasa y la instalacion falla".
+
+  POR QUE IMPORTA: un nombre que Windows rechaza no falla en la TUI ni al generar
+  la ISO. Falla al CREAR LA CUENTA durante la instalacion, o sea 40 minutos
+  despues, con el OOBE pidiendo cuenta Microsoft y sin bypassnro.cmd (seccion 2
+  del contrato). Y renombrar despues no arregla la CARPETA del perfil.
+#>
+
+# 20 caracteres: limite de la base SAM, no una eleccion de diseno nuestra.
+$script:WinUserNameMaxLen = 20
+
+# Los que rechaza Windows. En comillas simples a proposito: el " y el \ son
+# literales y no hay interpolacion que los toque.
+$script:WinUserNameBadChars = '"/\[]:;|=,+*?<>'
+
+# Reservados por el SO (dispositivos DOS). Lista explicita y no un rango generado:
+# se lee de un vistazo y no depende de que nadie se equivoque con el 1..9.
+$script:WinUserNameReserved = @(
+  'CON','PRN','AUX','NUL',
+  'COM1','COM2','COM3','COM4','COM5','COM6','COM7','COM8','COM9',
+  'LPT1','LPT2','LPT3','LPT4','LPT5','LPT6','LPT7','LPT8','LPT9'
+)
+
+# Cuentas que Windows 11 ya trae creadas: pedir una de estas no crea nada, choca.
+$script:WinUserNameTaken = @('Administrator','Guest','DefaultAccount','WDAGUtilityAccount','SYSTEM')
+
+<#
+  Test-WindowsUserName -- devuelve $null si el nombre sirve, o el MENSAJE DE ERROR.
+  Sirve tal cual como -Validate de Show-TuiInput y se puede testear sola.
+
+      Test-WindowsUserName 'pato'            -> $null
+      Test-WindowsUserName 'pa|to'           -> 'Windows no acepta estos caracteres...'
+      Test-WindowsUserName 'pato' -Advisory  -> $null
+
+  -Advisory: EL MISMO chequeo, pero devuelve el AVISO en vez del error.
+
+  POR QUE UN SWITCH Y NO OTRO TIPO DE RETORNO. El contrato pide dos cosas que
+  conviven: hay nombres que NO se pueden usar (bloquean) y nombres validos que
+  igual merecen una advertencia (espacios, acentos: la carpeta del perfil va a
+  quedar con eso). Las opciones eran:
+    - devolver un objeto @{ Error; Aviso }  -> deja de servir de -Validate, que
+      espera $null-o-string, y el llamador tiene que saber destriparlo;
+    - devolver 'AVISO: ...' con prefijo     -> un contrato de string magico que hay
+      que parsear del otro lado, y que se rompe en silencio si alguien traduce el
+      mensaje;
+    - dos funciones separadas               -> dos listas de reglas que se van a
+      desincronizar el dia que se agregue una regla.
+  Con el switch hay UNA fuente de reglas, el tipo de retorno es siempre el mismo
+  ($null o string) y el que llama elige QUE canal quiere leer. Show-TuiInput pide
+  los dos: -Validate sin el switch, -Advise con el switch.
+
+  -Advisory sobre un nombre INVALIDO devuelve $null: el error ya bloquea a Enter y
+  amontonar un aviso arriba de un error solo tapa el motivo real.
+
+  -ComputerName default $env:COMPUTERNAME. MATIZ HONESTO: el nombre que importa es
+  el de la maquina DONDE SE VA A INSTALAR, y a la hora de construir la ISO eso no
+  se conoce (el autounattend no fija ComputerName, se lo inventa Windows). El
+  nombre del host que construye es la mejor aproximacion disponible y es la regla
+  que pide el contrato. Se puede desactivar con -ComputerName ''.
+#>
+function Test-WindowsUserName {
+  param(
+    # [AllowEmptyString()] por lo mismo que [AllowEmptyCollection()] en la
+    # checklist: Mandatory RECHAZA '' en el binding, y "el nombre esta vacio" es
+    # justo el primer caso que esta funcion tiene que poder contestar. Sin esto
+    # reventaria ANTES de entrar, con un error de PowerShell.
+    [Parameter(Mandatory)][AllowEmptyString()][AllowNull()][string]$Name,
+    [string]$ComputerName = $env:COMPUTERNAME,
+    [switch]$Advisory
+  )
+
+  $n = [string]$Name   # $null -> ''
+  $err = $null
+
+  if ($n.Length -eq 0) {
+    $err = 'el nombre no puede estar vacio.'
+  }
+  elseif ($n.Length -gt $script:WinUserNameMaxLen) {
+    $err = ('el nombre no puede pasar de ' + $script:WinUserNameMaxLen +
+            ' caracteres (tiene ' + $n.Length + '): es el limite de la base SAM.')
+  }
+  else {
+    # Los prohibidos se juntan TODOS antes de armar el mensaje: decirle al usuario
+    # "sacale el |" cuando tambien tiene un ':' lo hace volver dos veces.
+    $malos = @()
+    foreach ($c in $n.ToCharArray()) {
+      if (($script:WinUserNameBadChars.IndexOf($c) -ge 0) -and ($malos -notcontains $c)) { $malos += $c }
+    }
+    $ctrl = @($n.ToCharArray() | Where-Object { [char]::IsControl($_) })
+
+    if ($malos.Count -gt 0) {
+      $err = 'Windows no acepta estos caracteres en un nombre de cuenta: ' + ($malos -join ' ')
+    }
+    elseif ($ctrl.Count -gt 0) {
+      # No se puede tipear en la TUI, pero SI puede venir de un perfil.json editado
+      # a mano (un tab pegado de otro lado). La funcion se usa en los dos caminos.
+      $err = 'el nombre tiene caracteres de control (tabs, saltos de linea): sacalos.'
+    }
+    elseif ($n -match '^[. ]+$') {
+      $err = 'el nombre no puede ser solo puntos y espacios.'
+    }
+    elseif ($n.EndsWith('.')) {
+      $err = 'el nombre no puede terminar en punto.'
+    }
+    elseif ($n.StartsWith(' ') -or $n.EndsWith(' ')) {
+      $err = 'el nombre no puede empezar ni terminar con un espacio.'
+    }
+    # -contains con strings es case-insensitive (medido): 'con' tambien esta
+    # reservado, no solo 'CON'.
+    elseif ($script:WinUserNameReserved -contains $n) {
+      $err = ("'" + $n + "' es un nombre de dispositivo reservado por Windows (" +
+              'CON PRN AUX NUL COM1-9 LPT1-9).')
+    }
+    elseif ($script:WinUserNameTaken -contains $n) {
+      $err = ("'" + $n + "' ya es una cuenta del sistema en Windows 11: elegi otro.")
+    }
+    elseif ($ComputerName -and ($n -eq $ComputerName)) {
+      $err = ("el nombre no puede ser igual al del equipo ('" + $ComputerName +
+              "'): choca con la cuenta de maquina.")
+    }
+  }
+
+  if ($Advisory) {
+    if ($err) { return $null }
+    $motivos = @()
+    if ($n.Contains(' '))         { $motivos += 'espacios' }
+    if ($n -match '[^\x00-\x7F]') { $motivos += 'caracteres no-ASCII (acentos y demas)' }
+    if ($motivos.Count -eq 0) { return $null }
+    # Se dice la CONSECUENCIA CONCRETA, no "puede haber problemas": la carpeta se
+    # crea una sola vez y despues no se cambia mas, ni renombrando la cuenta.
+    # Y se dice CORTO: el aviso tiene que entrar completo en las 3 lineas de mensaje
+    # de Show-TuiInput con el nombre mas largo posible (20 caracteres) y los dos
+    # motivos a la vez. Un aviso que se corta a la mitad no aviso nada.
+    return ('el nombre tiene ' + ($motivos -join ' y ') + ': la carpeta del perfil va a ser ' +
+            'C:\Users\' + $n + ' y eso no se cambia mas.')
+  }
+
+  $err
+}

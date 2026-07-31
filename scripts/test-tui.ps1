@@ -139,6 +139,47 @@ function Invoke-Menu {
   Show-TuiMenu -Entries $Entries -Subtitle 'test' 6>$null
 }
 
+# Un string -> la lista de nombres de tecla que hay que enviar para tipearlo.
+# El espacio va como 'Spacebar' porque es lo que entrega la consola de verdad
+# (Key = Spacebar, KeyChar = ' '); el resto de los caracteres viajan sueltos, que
+# es la otra forma que entiende ConvertTo-TuiKeyInfo.
+function Get-KeysForText([string]$Text) {
+  $k = @()
+  foreach ($c in $Text.ToCharArray()) {
+    if ($c -eq ' ') { $k += 'Spacebar' } else { $k += [string]$c }
+  }
+  ,$k
+}
+
+# Corre Show-TuiInput con teclas inyectadas y devuelve @{ Lines; Ret }.
+#
+# El filtro de $null NO es defensivo de mas: Show-TuiInput devuelve $null cuando el
+# usuario cancela con Esc, y $_.GetType() sobre $null TIRA. Sin el guarda, el test
+# de Esc se anotaria como EXCEPCION en vez de medir el retorno. Y el $null tiene que
+# SOBREVIVIR al filtro (medido: @($null,'a') | Where { $null -eq $_ -or ... } lo
+# conserva), porque "devolvio $null" y "no devolvio nada" son cosas distintas: si
+# Show-TuiInput se comiera el retorno, el llamador veria lo mismo que con un Esc.
+function Invoke-Input {
+  param(
+    [string]$Prompt = 'nombre', [string]$Default = '', [int]$MaxLen = 20,
+    [scriptblock]$Validate = $null, [scriptblock]$Advise = $null,
+    [string[]]$Lines = @(), [string[]]$Keys
+  )
+  Send-TuiKeys $Keys
+  # Splatting para no pasar -Validate/-Advise en $null cuando el test no los usa:
+  # asi el camino "sin validador" se ejerce de verdad.
+  $p = @{ Title = 'test'; Prompt = $Prompt; Default = $Default; MaxLen = $MaxLen; Lines = $Lines }
+  if ($Validate) { $p.Validate = $Validate }
+  if ($Advise)   { $p.Advise   = $Advise }
+  $raw = @(Show-TuiInput @p 6>&1)
+  $inf = 'System.Management.Automation.InformationRecord'
+  @{
+    Lines = @($raw | Where-Object { ($null -ne $_) -and ($_.GetType().FullName -eq $inf) } |
+                     ForEach-Object { "$($_.MessageData.Message)" })
+    Ret   = @($raw | Where-Object { ($null -eq $_) -or ($_.GetType().FullName -ne $inf) })
+  }
+}
+
 Write-Host ''
 Write-Host '== TESTS de la TUI (teclas inyectadas, sin UI ni humano) ==' -ForegroundColor Cyan
 
@@ -590,6 +631,423 @@ Test-Case 'confirmar y pausar' {
   Send-TuiKeys @('A','Spacebar','Enter')
   Show-TuiPause 'seguir' 6>$null
   Chk 'Show-TuiPause solo vuelve con Enter' ($Global:TuiKeyQueue.Count -eq 0)
+}
+
+# ===========================================================================
+#  12. Show-TuiInput -- EL UNICO LUGAR DONDE EL USUARIO ESCRIBE
+#
+#  Lo que se tipea aca termina en <Name> del autounattend, o sea en el nombre de la
+#  cuenta y en la CARPETA del perfil, que no se cambia mas (docs\contrato-cuenta-
+#  usuario.md). Un campo de texto que no se puede testear sin humano es un campo
+#  que en la practica no se testea nunca: por eso lee con Get-TuiKey y no con
+#  Read-Host.
+# ===========================================================================
+Test-Case 'Show-TuiInput: tipear y confirmar' {
+  $r = Invoke-Input -Default 'pato' -Keys ((Get-KeysForText 'juan') + @('Enter'))
+  Chk 'tipear "juan" y Enter devuelve "juan"' ($r.Ret.Count -eq 1 -and $r.Ret[0] -eq 'juan') `
+      ("-> devolvio: [" + ($r.Ret -join '|') + "]")
+  # Update-TuiLayout devuelve un hashtable POR FRAME: si se llamara pelado, el
+  # retorno de esta funcion serian 6 hashtables y un string, y el llamador se
+  # guardaria cualquier cosa en el perfil. Ya paso con el exit code del self-test.
+  Chk 'el retorno es UN unico string (nada se cuela al pipeline)' `
+      ($r.Ret.Count -eq 1 -and $r.Ret[0] -is [string]) ("-> devolvio " + $r.Ret.Count + " objetos")
+  Chk 'y el campo se dibuja con la etiqueta, el texto y el cursor' `
+      (@($r.Lines | Where-Object { $_ -match '^\s+nombre: juan_' }).Count -ge 1) `
+      '-> el usuario no ve lo que esta escribiendo'
+
+  # Digitos y simbolos: el filtro de imprimibles no puede dejar pasar solo letras.
+  $r = Invoke-Input -Keys ((Get-KeysForText 'pato-01.x') + @('Enter'))
+  Chk 'los digitos y los simbolos permitidos entran' ($r.Ret[0] -eq 'pato-01.x') ("-> [" + $r.Ret[0] + "]")
+
+  # Las teclas SIN KeyChar (llegan con NUL) y las de control no pueden insertar
+  # basura invisible en un nombre que despues no crea la cuenta.
+  $r = Invoke-Input -Keys @('DownArrow','Tab','F1','Delete','UpArrow','a','Enter')
+  Chk 'las flechas, Tab, F1 y Delete no insertan nada' ($r.Ret[0] -eq 'a') `
+      ("-> [" + $r.Ret[0] + "] largo " + $r.Ret[0].Length)
+
+  # No-ASCII SI entra: la seccion 4 del contrato dice ADVERTIR, no prohibir. El
+  # caracter se construye por codigo porque este archivo tiene que ser ASCII puro.
+  $oAcc = [string][char]0xF3
+  $r = Invoke-Input -Keys (@('p','a','t') + @($oAcc) + @('n','Enter'))
+  Chk 'un caracter no-ASCII (acento) se puede tipear: se advierte, no se prohibe' `
+      ($r.Ret[0] -eq ('pat' + $oAcc + 'n')) ("-> [" + $r.Ret[0] + "]")
+}
+
+Test-Case 'Show-TuiInput: Backspace' {
+  $r = Invoke-Input -Keys ((Get-KeysForText 'juan') + @('Backspace','Enter'))
+  Chk 'Backspace borra el ultimo caracter' ($r.Ret[0] -eq 'jua') ("-> [" + $r.Ret[0] + "]")
+
+  $r = Invoke-Input -Keys ((Get-KeysForText 'juan') + @('Backspace','Backspace','Enter'))
+  Chk 'dos Backspace borran dos' ($r.Ret[0] -eq 'ju') ("-> [" + $r.Ret[0] + "]")
+
+  # Y despues de borrar se puede seguir escribiendo: si el Substring dejara el
+  # string en un estado raro, esto lo caza.
+  $r = Invoke-Input -Keys ((Get-KeysForText 'juan') + @('Backspace') + (Get-KeysForText 'na') + @('Enter'))
+  Chk 'se puede seguir tipeando despues de borrar' ($r.Ret[0] -eq 'juana') ("-> [" + $r.Ret[0] + "]")
+
+  # Backspace con el campo vacio: Substring(0,-1) TIRA. El guarda es real.
+  $r = Invoke-Input -Default 'pato' -Keys @('Backspace','Backspace','Backspace','Enter')
+  Chk 'Backspace con el campo vacio no explota (y sigue valiendo el default)' `
+      ($r.Ret.Count -eq 1 -and $r.Ret[0] -eq 'pato') ("-> [" + ($r.Ret -join '|') + "]")
+
+  # Borrar TODO vuelve al estado "vacio", con lo que eso implique (default o error).
+  $r = Invoke-Input -Default 'pato' -Keys ((Get-KeysForText 'ab') + @('Backspace','Backspace','Enter'))
+  Chk 'borrar todo lo tipeado vuelve a "vacio = default"' ($r.Ret[0] -eq 'pato') ("-> [" + $r.Ret[0] + "]")
+}
+
+Test-Case 'Show-TuiInput: Escape cancela' {
+  $r = Invoke-Input -Default 'pato' -Keys @('Escape')
+  Chk 'Escape devuelve $null' ($r.Ret.Count -eq 1 -and $null -eq $r.Ret[0]) `
+      ("-> devolvio " + $r.Ret.Count + " objetos: [" + ($r.Ret -join '|') + "]")
+  # Lo importante no es "algo falsy": es $null. Un '' pasaria el `if (-not $x)` del
+  # llamador igual que $null, pero un string vacio metido en el <Name> del
+  # autounattend rompe la creacion de la cuenta en la instalacion.
+  Chk 'y NO devuelve un string (ni vacio ni lo tipeado)' ($r.Ret[0] -isnot [string]) `
+      ("-> devolvio un " + $(if ($null -eq $r.Ret[0]) { 'null' } else { $r.Ret[0].GetType().Name }))
+
+  $r = Invoke-Input -Default 'pato' -Keys ((Get-KeysForText 'juan') + @('Escape'))
+  Chk 'Escape despues de tipear tambien devuelve $null (no lo tipeado)' `
+      ($r.Ret.Count -eq 1 -and $null -eq $r.Ret[0]) ("-> [" + ($r.Ret -join '|') + "]")
+  Chk 'Escape corta el bucle en el frame (no sigue pidiendo teclas)' ($Global:TuiKeyQueue.Count -eq 0)
+}
+
+# ===========================================================================
+#  Enter con el campo VACIO -- la decision (b) de Show-TuiInput.
+#  Con -Default: devuelve el default (el frame lo anuncia con "(vacio = pato)").
+#  Sin -Default: NO confirma, porque la funcion no devuelve '' NUNCA -- un '' es
+#  indistinguible de $null para un llamador que escribe `if ($nombre)`.
+# ===========================================================================
+Test-Case 'Show-TuiInput: Enter con el campo vacio' {
+  $r = Invoke-Input -Default 'pato' -Keys @('Enter')
+  Chk 'Enter con el campo vacio devuelve el -Default' ($r.Ret[0] -eq 'pato') ("-> [" + $r.Ret[0] + "]")
+  Chk 'y el frame avisa que vacio = el default' `
+      (@($r.Lines | Where-Object { $_ -match '\(vacio = pato\)' }).Count -ge 1) `
+      '-> el usuario no puede saber que le va a pasar si aprieta Enter'
+
+  # SIN default: los dos primeros Enter no tienen que hacer nada. Si confirmaran,
+  # la cola se quedaria con teclas sin consumir y el retorno seria ''.
+  $r = Invoke-Input -Keys @('Enter','Enter','x','Enter')
+  Chk 'sin -Default, Enter con el campo vacio NO confirma' ($r.Ret.Count -eq 1 -and $r.Ret[0] -eq 'x') `
+      ("-> devolvio: [" + ($r.Ret -join '|') + "]")
+  Chk 'y consumio las dos teclas (no quedo nada en la cola)' ($Global:TuiKeyQueue.Count -eq 0)
+  Chk 'y dijo por que no confirma' `
+      (@($r.Lines | Where-Object { $_ -match 'ERROR.*no puede quedar vacio' }).Count -ge 1)
+
+  # El default TAMBIEN pasa por -Validate (decision (d)): un default invalido
+  # cableado por el llamador se tiene que ver EN LA TUI, no en la instalacion.
+  $r = Invoke-Input -Default 'con' -Validate { param($s) Test-WindowsUserName $s -ComputerName 'PC' } `
+                    -Keys @('Enter','Enter','p','a','t','o','Enter')
+  Chk 'un -Default invalido no se puede confirmar con Enter' ($r.Ret[0] -eq 'pato') `
+      ("-> devolvio [" + ($r.Ret -join '|') + "]: el default se colo sin validar")
+  Chk 'y se ve el error del default sin haber tipeado nada' `
+      (@($r.Lines | Where-Object { $_ -match 'ERROR.*reservado' }).Count -ge 1)
+}
+
+Test-Case 'Show-TuiInput: -MaxLen' {
+  $r = Invoke-Input -MaxLen 3 -Keys ((Get-KeysForText 'abcdefgh') + @('Enter'))
+  Chk '-MaxLen 3 corta en 3 caracteres' ($r.Ret[0] -eq 'abc') `
+      ("-> [" + $r.Ret[0] + "] (" + $r.Ret[0].Length + " caracteres)")
+  Chk 'y el contador dibuja el limite' (@($r.Lines | Where-Object { $_ -match '\[3/3\]' }).Count -ge 1)
+
+  # Llegar al tope no puede TRABAR el campo: Backspace tiene que seguir andando y
+  # despues se puede volver a llenar.
+  $r = Invoke-Input -MaxLen 3 -Keys ((Get-KeysForText 'abcdef') + @('Backspace') + (Get-KeysForText 'z') + @('Enter'))
+  Chk 'en el tope se puede borrar y volver a escribir' ($r.Ret[0] -eq 'abz') ("-> [" + $r.Ret[0] + "]")
+
+  $r = Invoke-Input -MaxLen 1 -Keys ((Get-KeysForText 'abc') + @('Enter'))
+  Chk '-MaxLen 1 deja un solo caracter' ($r.Ret[0] -eq 'a') ("-> [" + $r.Ret[0] + "]")
+
+  # El default 20 no es un numero de adorno: es el limite de la SAM, el mismo que
+  # aplica Test-WindowsUserName. Si los dos no coinciden, la TUI deja tipear un
+  # nombre que su propio validador rechaza.
+  $r = Invoke-Input -Keys ((Get-KeysForText ('a' * 25)) + @('Enter'))
+  Chk 'el -MaxLen por default es el limite de la SAM (20)' `
+      ($r.Ret[0].Length -eq $script:WinUserNameMaxLen) ("-> dejo tipear " + $r.Ret[0].Length)
+  Chk 'y lo que sale del campo con el default pasa la validacion de largo' `
+      ($null -eq (Test-WindowsUserName $r.Ret[0] -ComputerName 'PC'))
+
+  # Guardas contra el llamador. Tiran a proposito en la PRIMERA llamada.
+  $m = ''
+  try { Send-TuiKeys @('Enter'); Show-TuiInput -Title 't' -Prompt 'n' -MaxLen 0 6>$null | Out-Null }
+  catch { $m = $_.Exception.Message }
+  Chk '-MaxLen 0 TIRA (un campo donde no se puede escribir es un bug del llamador)' `
+      ($m -match 'MaxLen') "-> dijo: $m"
+  $m = ''
+  try { Send-TuiKeys @('Enter'); Show-TuiInput -Title 't' -Prompt 'n' -Default 'demasiado largo' -MaxLen 4 6>$null | Out-Null }
+  catch { $m = $_.Exception.Message }
+  Chk 'un -Default mas largo que -MaxLen TIRA (el frame prometeria lo que Enter no confirma)' `
+      ($m -match 'Default') "-> dijo: $m"
+}
+
+# ===========================================================================
+#  -Validate BLOQUEA a Enter, -Advise NO. Punto 6 de la seccion 7 del contrato.
+# ===========================================================================
+Test-Case 'Show-TuiInput: -Validate bloquea a Enter' {
+  $val = { param($s) Test-WindowsUserName $s -ComputerName 'PC' }
+
+  # 'pa|to' es invalido: el Enter del medio NO puede confirmar. Se borran los tres
+  # ultimos caracteres ('|to') y ahi si.
+  $r = Invoke-Input -Validate $val `
+                    -Keys ((Get-KeysForText 'pa|to') + @('Enter','Backspace','Backspace','Backspace','Enter'))
+  Chk 'un nombre con un caracter prohibido NO se confirma con Enter' `
+      ($r.Ret.Count -eq 1 -and $r.Ret[0] -eq 'pa') `
+      ("-> devolvio [" + ($r.Ret -join '|') + "]: se confirmo un nombre que Windows rechaza")
+  Chk 'y el error se ve EN VIVO debajo del campo, con el caracter culpable' `
+      (@($r.Lines | Where-Object { $_ -match 'ERROR.*no acepta estos caracteres.*\|' }).Count -ge 1) `
+      '-> el usuario no tiene forma de saber por que Enter no hace nada'
+
+  # Un nombre reservado tampoco pasa.
+  $r = Invoke-Input -Validate $val -Keys ((Get-KeysForText 'con') + @('Enter','Escape'))
+  Chk 'un nombre reservado (con) tampoco se confirma' ($null -eq $r.Ret[0]) `
+      ("-> devolvio [" + ($r.Ret -join '|') + "]")
+
+  # El error tiene que DESAPARECER cuando el nombre se arregla: si quedara pegado,
+  # Enter no volveria a funcionar nunca y el usuario se queda encerrado.
+  $r = Invoke-Input -Validate $val -Keys ((Get-KeysForText 'con') + @('Enter','x','Enter'))
+  Chk 'arreglar el nombre desbloquea a Enter (el error no queda pegado)' ($r.Ret[0] -eq 'conx') `
+      ("-> [" + ($r.Ret -join '|') + "]")
+
+  # -Advise NO bloquea: 'juan carlos' es valido, solo merece el aviso de la carpeta.
+  $r = Invoke-Input -Validate $val -Advise { param($s) Test-WindowsUserName $s -Advisory } `
+                    -Keys ((Get-KeysForText 'juan carlos') + @('Enter'))
+  Chk 'un nombre con espacios SI se confirma (el aviso no bloquea)' ($r.Ret[0] -eq 'juan carlos') `
+      ("-> devolvio [" + ($r.Ret -join '|') + "]")
+  Chk 'y el aviso dice la ruta concreta de la carpeta del perfil' `
+      (@($r.Lines | Where-Object { $_ -match 'AVISO' }).Count -ge 1 -and `
+       @($r.Lines | Where-Object { $_ -match 'C:\\Users\\juan carlos' }).Count -ge 1) `
+      '-> se acepta el nombre sin decir que la carpeta queda asi para siempre'
+
+  # UN AVISO TRUNCADO ES PEOR QUE NINGUNO: parece que la herramienta te dijo algo
+  # cuando en realidad se comio el final. Se mide el PEOR caso -- 20 caracteres (el
+  # tope), con espacio Y con no-ASCII, o sea el aviso mas largo que se puede
+  # generar -- y se exige que entre COMPLETO en las lineas de mensaje del frame.
+  # Con 2 lineas de mensaje esto se cortaba (medido); de ahi las 3.
+  $peor = ('a' * 9) + ' ' + [string][char]0xF3 + ('b' * 9)
+  $esperado = 'AVISO: ' + (Test-WindowsUserName $peor -ComputerName 'PC' -Advisory)
+  $r = Invoke-Input -Validate $val -Advise { param($s) Test-WindowsUserName $s -Advisory } `
+                    -Keys ((Get-KeysForText $peor) + @('Enter'))
+  $frame = ((@($r.Lines) | Select-Object -Last 13) -join ' ') -replace '\s+', ' '
+  Chk 'el aviso mas largo posible (20 caracteres, espacio y acento) entra COMPLETO' `
+      ($frame -match [regex]::Escape(($esperado -replace '\s+', ' '))) `
+      '-> el frame corto el aviso: el usuario ve media advertencia'
+  Chk 'y ese nombre igual se confirma (el aviso nunca bloquea)' ($r.Ret[0] -eq $peor)
+
+  # Un validador que TIRA no puede llevarse la TUI puesta a mitad de frame.
+  $r = Invoke-Input -Validate { param($s) throw 'boom' } -Keys @('a','Enter','Escape')
+  Chk 'un -Validate que TIRA se degrada a error (Enter bloqueado, Esc sigue saliendo)' `
+      ($r.Ret.Count -eq 1 -and $null -eq $r.Ret[0]) ("-> [" + ($r.Ret -join '|') + "]")
+  Chk 'y el motivo se ve en el frame' `
+      (@($r.Lines | Where-Object { $_ -match 'validacion fallo.*boom' }).Count -ge 1)
+}
+
+# ===========================================================================
+#  El frame del input tambien se adapta a la consola. Volver a cablear 78
+#  columnas aca desarmaria el frame en cualquier ventana mas angosta.
+# ===========================================================================
+Test-Case 'Show-TuiInput: el frame se adapta a la consola' {
+  $prev = $Global:TuiSizeProvider
+  try {
+    $Global:TuiSizeProvider = { @{ Width = 120; Height = 30 } }
+    $r = Invoke-Input -Default 'pato' -Keys @('Enter')
+    Chk 'con 120x30 el frame del input mide 78 columnas' ((Get-MaxLineLength $r.Lines) -eq 78) `
+        ("-> " + (Get-MaxLineLength $r.Lines) + " columnas")
+
+    $Global:TuiSizeProvider = { @{ Width = 46; Height = 24 } }
+    $largas = @('una linea de contexto bien larga que no entra de una sola vez en un frame angosto y tiene que wrappear') * 6
+    $r = Invoke-Input -Default 'pato' -Lines $largas -Keys @('Enter')
+    $ancho = Get-MaxLineLength $r.Lines
+    Chk 'con 46 columnas ninguna linea del input pasa de 45' ($ancho -le 45) `
+        ("-> la linea mas larga midio " + $ancho + ": hace wrap y parte el frame")
+    Chk 'con 24 filas el frame del input entra en 23 lineas (aun con -Lines de sobra)' `
+        ($r.Lines.Count -le 23) `
+        ("-> dibujo " + $r.Lines.Count + " lineas: el buffer scrollea y el redibujo queda corrido")
+    Chk 'y el campo sigue funcionando con la consola chica' ($r.Ret[0] -eq 'pato')
+  } finally { $Global:TuiSizeProvider = $prev }
+}
+
+# ===========================================================================
+#  EL REQUISITO DE FONDO, MEDIDO COMO CLASE: la TUI no puede llamar a Read-Host
+#  en NINGUN lugar. No es estilo: Read-Host escribe su propio eco y rompe el frame,
+#  y ademas NO pasa por $Global:TuiKeyProvider, o sea que cualquier pedazo de input
+#  que lo use deja de ser testeable sin humano -- justo lo que este archivo existe
+#  para evitar. Un test por funcion se olvidaria de la funcion que se agregue
+#  manana; esto cubre el archivo entero.
+#
+#  Se busca por AST y NO por texto: los comentarios de tui.ps1 nombran a Read-Host
+#  cinco veces a proposito (para explicar por que no se usa), asi que un
+#  Select-String daria falso positivo y el test terminaria borrado por molesto.
+# ===========================================================================
+Test-Case 'la TUI no llama a Read-Host en ningun lugar' {
+  $ast = [System.Management.Automation.Language.Parser]::ParseFile(
+            "$PSScriptRoot\tui.ps1", [ref]$null, [ref]$null)
+  $cmds = @($ast.FindAll({ param($x) $x -is [System.Management.Automation.Language.CommandAst] }, $true) |
+            ForEach-Object { "$($_.GetCommandName())" })
+  Chk 'tui.ps1 no invoca Read-Host (todo el input entra por Get-TuiKey)' `
+      (@($cmds | Where-Object { $_ -eq 'Read-Host' }).Count -eq 0) `
+      '-> rompe el frame y no pasa por $TuiKeyProvider: input no testeable'
+  # Y el contra-chequeo, para que el de arriba no de verde por vacio (un AST mal
+  # leido devolveria cero comandos de todo tipo y "cero Read-Host" seria mentira).
+  Chk 'y el AST si ve las llamadas a Get-TuiKey (el chequeo de arriba mide algo)' `
+      (@($cmds | Where-Object { $_ -eq 'Get-TuiKey' }).Count -ge 4) `
+      ("-> encontro " + @($cmds | Where-Object { $_ -eq 'Get-TuiKey' }).Count + " llamadas")
+}
+
+# Un campo de texto que espera el teclado cuando la cola se vacia es un test
+# colgado, y a un test colgado no lo vuelve a correr nadie. Tiene que TIRAR, igual
+# que el resto de la TUI.
+Test-Case 'Show-TuiInput: con la cola vacia TIRA, no se cuelga' {
+  $m = ''
+  try { Send-TuiKeys @('p','a'); Show-TuiInput -Title 't' -Prompt 'nombre' 6>$null | Out-Null }
+  catch { $m = $_.Exception.Message }
+  Chk 'sin Enter ni Escape al final, Show-TuiInput TIRA' ($m -match 'cola de teclas') "-> dijo: $m"
+}
+
+# ===========================================================================
+#  13. Test-WindowsUserName -- CADA REGLA DE LA SECCION 4 DEL CONTRATO
+#
+#  Un nombre invalido no falla en la TUI ni al generar la ISO: falla al CREAR LA
+#  CUENTA durante la instalacion, 40 minutos despues, y el OOBE queda pidiendo
+#  cuenta Microsoft (ya no hay bypassnro.cmd en 24H2/25H2).
+#
+#  -ComputerName se pasa SIEMPRE explicito: con el default ($env:COMPUTERNAME) el
+#  resultado dependeria de como se llama la maquina que corre los tests.
+# ===========================================================================
+Test-Case 'Test-WindowsUserName: nombres validos' {
+  foreach ($n in @('pato', 'p', 'Juan', 'juan.carlos', 'usuario_1', 'a-b', ('a' * 20), 'COM0', 'LPT0', 'CONS', 'pa to')) {
+    Chk "'$n' es valido" ($null -eq (Test-WindowsUserName $n -ComputerName 'PC')) `
+        ("-> lo rechazo: " + (Test-WindowsUserName $n -ComputerName 'PC'))
+  }
+  # 'COM0'/'LPT0'/'CONS' no son reservados: el test mide la CLASE (la lista exacta)
+  # y no "algo que empieza con COM", que rechazaria nombres perfectamente validos.
+}
+
+Test-Case 'Test-WindowsUserName: largo (limite de la SAM)' {
+  Chk 'vacio se rechaza' ($null -ne (Test-WindowsUserName '' -ComputerName 'PC'))
+  Chk '$null se rechaza como vacio (puede venir de un perfil.json a mano)' `
+      ($null -ne (Test-WindowsUserName $null -ComputerName 'PC'))
+  Chk '20 caracteres justos pasan' ($null -eq (Test-WindowsUserName ('a' * 20) -ComputerName 'PC'))
+  $e = Test-WindowsUserName ('a' * 21) -ComputerName 'PC'
+  Chk '21 caracteres se rechazan' ($null -ne $e) '-> un nombre mas largo que la SAM no crea la cuenta'
+  Chk 'y el mensaje dice el limite y el largo real' ($e -match '20' -and $e -match '21') "-> dijo: $e"
+}
+
+Test-Case 'Test-WindowsUserName: caracteres prohibidos' {
+  # Los 15 de la tabla de la seccion 4, uno por uno: si el chequeo se hiciera con un
+  # regex mal escapado, alguno se colaria y este bucle lo caza.
+  $prohibidos = @('"', '/', '\', '[', ']', ':', ';', '|', '=', ',', '+', '*', '?', '<', '>')
+  $colados = @()
+  foreach ($c in $prohibidos) {
+    if ($null -eq (Test-WindowsUserName ('pa' + $c + 'to') -ComputerName 'PC')) { $colados += $c }
+  }
+  Chk 'los 15 caracteres prohibidos se rechazan' ($colados.Count -eq 0) `
+      ("-> se colaron: " + ($colados -join ' '))
+  $e = Test-WindowsUserName 'pa|to:x' -ComputerName 'PC'
+  Chk 'el mensaje junta TODOS los caracteres malos (no manda al usuario dos veces)' `
+      ($e -match '\|' -and $e -match ':') "-> dijo: $e"
+  Chk 'un tab (que puede venir de un perfil editado a mano) se rechaza' `
+      ($null -ne (Test-WindowsUserName ("pa" + [char]9 + "to") -ComputerName 'PC'))
+}
+
+Test-Case 'Test-WindowsUserName: puntos y espacios en los bordes' {
+  Chk 'terminar en punto se rechaza' ($null -ne (Test-WindowsUserName 'pato.' -ComputerName 'PC'))
+  Chk 'un punto EN EL MEDIO es valido' ($null -eq (Test-WindowsUserName 'pa.to' -ComputerName 'PC'))
+  Chk 'solo puntos se rechaza' ($null -ne (Test-WindowsUserName '...' -ComputerName 'PC'))
+  Chk 'solo espacios se rechaza' ($null -ne (Test-WindowsUserName '   ' -ComputerName 'PC'))
+  Chk 'puntos y espacios mezclados se rechaza' ($null -ne (Test-WindowsUserName '. .' -ComputerName 'PC'))
+  Chk 'empezar con espacio se rechaza' ($null -ne (Test-WindowsUserName ' pato' -ComputerName 'PC'))
+  Chk 'terminar con espacio se rechaza' ($null -ne (Test-WindowsUserName 'pato ' -ComputerName 'PC'))
+  Chk 'un espacio EN EL MEDIO es valido (solo se advierte)' `
+      ($null -eq (Test-WindowsUserName 'juan carlos' -ComputerName 'PC'))
+}
+
+Test-Case 'Test-WindowsUserName: reservados y cuentas del sistema' {
+  $reservados = @('CON','PRN','AUX','NUL','COM1','COM9','LPT1','LPT9')
+  $colados = @()
+  foreach ($n in $reservados) {
+    if ($null -eq (Test-WindowsUserName $n -ComputerName 'PC')) { $colados += $n }
+  }
+  Chk 'los nombres de dispositivo reservados se rechazan' ($colados.Count -eq 0) `
+      ("-> se colaron: " + ($colados -join ' '))
+  # La caja no salva a nadie: Windows compara sin distinguir mayusculas.
+  Chk "'con' en minuscula tambien se rechaza" ($null -ne (Test-WindowsUserName 'con' -ComputerName 'PC'))
+  Chk "'Com1' mezclado tambien" ($null -ne (Test-WindowsUserName 'Com1' -ComputerName 'PC'))
+
+  $sistema = @('Administrator','Guest','DefaultAccount','WDAGUtilityAccount','SYSTEM')
+  $colados = @()
+  foreach ($n in $sistema) {
+    if ($null -eq (Test-WindowsUserName $n -ComputerName 'PC')) { $colados += $n }
+  }
+  Chk 'las cuentas que Windows ya trae creadas se rechazan' ($colados.Count -eq 0) `
+      ("-> se colaron: " + ($colados -join ' '))
+  Chk "'administrator' en minuscula tambien" ($null -ne (Test-WindowsUserName 'administrator' -ComputerName 'PC'))
+  Chk "'Administrador' (el de un Windows en espanol) NO esta en la lista y pasa" `
+      ($null -eq (Test-WindowsUserName 'Administrador' -ComputerName 'PC')) `
+      '-> si se agrega, que sea a proposito y documentado'
+}
+
+Test-Case 'Test-WindowsUserName: igual al nombre del equipo' {
+  $e = Test-WindowsUserName 'MIPC' -ComputerName 'MIPC'
+  Chk 'el nombre del equipo se rechaza' ($null -ne $e)
+  Chk 'y el mensaje dice que choca con el equipo' ($e -match 'equipo') "-> dijo: $e"
+  Chk 'la comparacion no distingue mayusculas' ($null -ne (Test-WindowsUserName 'mipc' -ComputerName 'MIPC'))
+  Chk 'un nombre parecido pero distinto pasa' ($null -eq (Test-WindowsUserName 'MIPC2' -ComputerName 'MIPC'))
+  # El default de -ComputerName tiene que ser el equipo REAL: si fuera '', la regla
+  # existiria en la firma y no se aplicaria nunca.
+  Chk 'por default se compara contra $env:COMPUTERNAME' `
+      ($null -ne (Test-WindowsUserName "$env:COMPUTERNAME")) `
+      ("-> no rechazo '" + $env:COMPUTERNAME + "', que es el nombre de esta maquina")
+  Chk "y con -ComputerName '' la regla se apaga (para un caso donde no se sabe)" `
+      ($null -eq (Test-WindowsUserName 'MIPC' -ComputerName ''))
+}
+
+# ===========================================================================
+#  "Valido pero con advertencia" -- el matiz de la seccion 4: los espacios y los
+#  no-ASCII NO se prohiben, se avisan, porque la CARPETA del perfil queda con ese
+#  nombre para siempre. El aviso viaja por -Advisory: mismo tipo de retorno
+#  ($null o string), misma lista de reglas, y el que llama elige el canal.
+# ===========================================================================
+Test-Case 'Test-WindowsUserName -Advisory' {
+  $conEspacio = Test-WindowsUserName 'juan carlos' -ComputerName 'PC' -Advisory
+  Chk 'un nombre con espacios es VALIDO y ademas tiene aviso' `
+      (($null -eq (Test-WindowsUserName 'juan carlos' -ComputerName 'PC')) -and ($null -ne $conEspacio))
+  Chk 'y el aviso dice la ruta exacta de la carpeta del perfil' `
+      ($conEspacio -match 'C:\\Users\\juan carlos') "-> dijo: $conEspacio"
+
+  $conAcento = 'pat' + [char]0xF3 + 'n'
+  Chk 'un nombre con acento es VALIDO y tiene aviso' `
+      (($null -eq (Test-WindowsUserName $conAcento -ComputerName 'PC')) -and `
+       ($null -ne (Test-WindowsUserName $conAcento -ComputerName 'PC' -Advisory)))
+  Chk 'un nombre ASCII sin espacios no tiene aviso' `
+      ($null -eq (Test-WindowsUserName 'pato' -ComputerName 'PC' -Advisory))
+  # Amontonar un aviso arriba de un error tapa el motivo real por el que Enter no
+  # confirma, y el error ya bloquea.
+  Chk 'un nombre INVALIDO no devuelve aviso (el error ya bloquea)' `
+      ($null -eq (Test-WindowsUserName 'pa|to carlos' -ComputerName 'PC' -Advisory))
+  # Los dos canales son la MISMA funcion: no hay dos listas de reglas que se puedan
+  # desincronizar. Se verifica que -Advisory no relaje ninguna.
+  $desincronizados = @()
+  foreach ($n in @('', 'con', 'pato.', ' pato', 'Guest', ('a' * 21), 'pa|to')) {
+    if ($null -ne (Test-WindowsUserName $n -ComputerName 'PC' -Advisory)) { $desincronizados += $n }
+  }
+  Chk '-Advisory no deja pasar nada que el canal de error rechace' ($desincronizados.Count -eq 0) `
+      ("-> devolvio aviso para: " + ($desincronizados -join ', '))
+}
+
+# El objetivo de todo esto: la funcion se puede enchufar tal cual en la TUI.
+Test-Case 'Test-WindowsUserName sirve tal cual como -Validate' {
+  $val = { param($s) Test-WindowsUserName $s -ComputerName 'PC' }
+  $r = Invoke-Input -Default 'pato' -Validate $val -Advise { param($s) Test-WindowsUserName $s -Advisory } `
+                    -Keys @('Enter')
+  Chk 'el default "pato" pasa la validacion real y se confirma' ($r.Ret[0] -eq 'pato') `
+      ("-> [" + ($r.Ret -join '|') + "]")
+  Chk 'y sin aviso, el frame no dibuja ningun AVISO' `
+      (@($r.Lines | Where-Object { $_ -match 'AVISO' }).Count -eq 0)
+
+  # 21 caracteres no se pueden ni tipear (MaxLen) Y ADEMAS el validador los
+  # rechazaria: las dos defensas puestas, no una sola.
+  $r = Invoke-Input -Validate $val -Keys ((Get-KeysForText ('a' * 21)) + @('Enter'))
+  Chk 'el campo corta en 20 y lo que sale es valido' `
+      (($r.Ret[0].Length -eq 20) -and ($null -eq (& $val $r.Ret[0]))) ("-> [" + $r.Ret[0] + "]")
 }
 
 # El estado global no se deja sucio: si otro script se carga en la misma sesion
