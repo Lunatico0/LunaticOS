@@ -150,10 +150,36 @@ placa, ese hardware deja de existir.
 Si preferis volver a cuenta local despues de instalar, se puede: el vinculo de la
 licencia queda hecho igual. Primero vincula, despues decidis como te logueas.
 
-### 1.8 Ultimo chequeo antes de apagar
+### 1.8 Pendrive y BIOS — el plan cambio, leelo antes de grabar nada
+
+**Hay un solo pendrive y no alcanza para las dos cosas a la vez.** La BIOS de la mother
+nueva necesita **FAT32**; la ISO pesa 7,5 GB y **no entra en FAT32**. Son requisitos
+incompatibles en una sola partición.
+
+> Operativo completo, con los dos caminos de flasheo y los riesgos: **`docs\bios-update.md`**.
+> Ese documento es la fuente de verdad de todo lo del pendrive. Acá va solo el orden.
+
+El plan es en **dos etapas separadas en el tiempo**, y la notebook hace la segunda:
+
+- [ ] **1.** Vaciar el pendrive a `E:\pendrive-backup` (y verificarlo con los ojos).
+- [ ] **2.** ⚠️ **Pasar la ISO a la notebook HOY**, por red local, y **comparar el
+      `Get-FileHash`** de los dos lados. La ISO **no viaja por el repo** (`work/` y
+      `*.iso` están en `.gitignore`): clonar el repo te da los scripts, **no la ISO**.
+      Sin este paso hay que reconstruirla de cero en la notebook — horas, con la PC
+      principal ya desarmada.
+- [ ] **3.** Formatear el pendrive **FAT32, una sola partición**, y poner el firmware
+      renombrado `gigabyte.bin` en la raíz. Nada más adentro.
+- [ ] **4.** Montar la placa nueva (**con la GPU discreta**: el 11400F no tiene video
+      integrado) y flashear.
+- [ ] **5.** **Recién después de flashear**, configurar Secure Boot + TPM. El flasheo
+      resetea la BIOS a defaults: al revés se pierde la configuración.
+- [ ] **6.** Desde la notebook, grabar la ISO al pendrive con **Rufus** (no Ventoy).
+
+### 1.9 Ultimo chequeo antes de apagar
 
 - [ ] Que el respaldo este **en E: o D:**, no en C:. Verificalo con los ojos.
-- [ ] La ISO de LunaticOS grabada en el pendrive con **Ventoy** (copiar el `.iso`).
+- [ ] La ISO **ya copiada y con hash verificado en la notebook**.
+- [ ] El firmware de la BIOS en el pendrive FAT32, como `gigabyte.bin`.
 - [ ] Anotá en papel: **el NVMe (WDC, 447 GB) es el que se formatea.**
 
 ---
@@ -162,6 +188,7 @@ licencia queda hecho igual. Primero vincula, despues decidis como te logueas.
 
 - [ ] Apagar y **desconectar fisicamente** el HDD Toshiba (D:) y el SSD Kingston (E:).
 - [ ] Dejar conectado **solo el NVMe WDC**.
+- [ ] **BIOS ya flasheada** (`docs\bios-update.md`) — va antes de todo esto.
 - [ ] BIOS: **Secure Boot ON + TPM 2.0 ON** (sin esto Vanguard tira VAN9001 y Valorant
       no abre).
 - [ ] Bootear el pendrive e instalar. En "Select location to install Windows" vas a ver
