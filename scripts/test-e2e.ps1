@@ -913,8 +913,25 @@ function Invoke-E2ECapa3 {
   $antes = if (Test-Path $iso) { (Get-Item $iso).LastWriteTime } else { [datetime]'1900-01-01' }
 
   try {
+    # ========================================================================
+    #  $PerfilTestPath, NO $PerfilUser. LAS TRES CAPAS MIDEN CONTRA EL MISMO PERFIL.
+    #
+    #  Esto decia $script:PerfilUser, y era correcto cuando el runner PISABA
+    #  perfil.json con el de test: esa ruta contenia el perfil de test. Al sacar el
+    #  pisado (para no tocar el archivo del usuario) quedo apuntando al perfil real
+    #  del usuario, y nadie lo noto.
+    #
+    #  CONSECUENCIA MEDIDA en la corrida del 2026-07-30: el build uso el perfil del
+    #  usuario (0 programas) mientras las capas 6 y 7 median contra el de test
+    #  (1 programa). La fase 11 dijo "nada seleccionado, salteo" y verify-live
+    #  reporto en rojo que faltaba install-apps.log. Una FALLA real... de la
+    #  herramienta de test, no del producto.
+    #
+    #  La regla: el perfil que construye la ISO tiene que ser EL MISMO contra el que
+    #  se verifica. Si no, se compara una ISO contra las expectativas de otra.
+    # ========================================================================
     $r = Invoke-E2EChild -ScriptArgs @((Join-Path $root 'LunaticOS.ps1'), '-Apply', '-NoPause', '-NoPreflight',
-                                       '-ProfilePath', $script:PerfilUser) `
+                                       '-ProfilePath', $script:PerfilTestPath) `
                          -TimeoutSec $BuildTimeoutSec -Tag 'build' -Mostrar
   }
   finally {
@@ -1697,7 +1714,23 @@ try {
   #  intacto, incluso si esto se muere de un Ctrl+C en el peor momento.
   # ==========================================================================
   $script:PerfilPisado = $false
-  Write-E2E ("  tu perfil.json NO se toca: las capas 6 y 7 miden con -ProfilePath") 'DarkGray'
+
+  # ==========================================================================
+  #  GUARDA: UN SOLO PERFIL PARA TODAS LAS CAPAS.
+  #  El perfil que construye la ISO (capa 3) tiene que ser EL MISMO contra el que
+  #  se verifica (capas 6 y 7). Si no, se compara una ISO contra las expectativas
+  #  de otra, y las FALLA que salen son de la herramienta, no del producto.
+  #  Ya paso: la capa 3 apuntaba al perfil del usuario y las 6-7 al de test.
+  # ==========================================================================
+  if (-not $script:PerfilTestPath -or -not (Test-Path $script:PerfilTestPath)) {
+    Write-E2E ''
+    Write-E2E "  ERROR: no tengo un perfil de test usable. Sin eso las capas medirian" 'Red'
+    Write-E2E "         contra perfiles distintos y sus FALLA no significarian nada." 'Red'
+    exit 3
+  }
+  Write-E2E ("  perfil de referencia de TODAS las capas (3, 6 y 7):") 'DarkGray'
+  Write-E2E ("     {0}" -f $script:PerfilTestPath) 'DarkGray'
+  Write-E2E ("  tu perfil.json NO se toca") 'DarkGray'
   if ($From -ge 4) {
     Write-E2E ''
     Write-E2E ("  OJO: -From {0} salta el build. Asumo que la ISO y la VM que hay se armaron con el" -f $From) 'Yellow'
