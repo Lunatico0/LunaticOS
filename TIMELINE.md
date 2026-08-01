@@ -3,7 +3,80 @@
 > Cronología operativa del cambio de placa madre + instalación de LunaticOS.
 > **Este documento es el orden. Los detalles del "por qué" están en `docs\`.**
 >
-> Armado el 2026-07-31. Leelo entero **una vez** antes de empezar la Fase 2.
+> Armado el 2026-07-31, actualizado el 2026-08-01. Leelo entero **una vez** antes de
+> empezar la Fase 2.
+
+---
+
+# ✅ CHECKLIST RÁPIDO
+
+> Una pantalla. Cada línea linkea al detalle. **Si solo vas a mirar una cosa, mirá esto.**
+
+### Ya está hecho — no lo repitas
+
+- [x] 🔑 Licencia digital **vinculada a la cuenta Microsoft** → [Fase 0](#fase-0--️-pc-vieja--lo-que-ya-está-hecho-)
+- [x] Discos etiquetados · mapa de particiones · carpetas redirigidas exportadas
+- [x] BitLocker verificado — **no hay cifrado**, se pueden desconectar los discos
+- [x] Respaldos en `E:\_migracion` — **37.243 archivos / 9,94 GB**
+- [x] Navegadores respaldados · **Firefox Sync activo y al día**
+- [x] Configs de apps + VS Code (39 extensiones)
+- [x] **ISO regenerada** (7,44 GB) · en la notebook · hash verificado
+- [x] **BIOS F13b + drivers** bajados · en la notebook · copia en `E:\_migracion\drivers-b560m`
+- [x] 🔧 **Pendrive listo para flashear** — `BIOS-GB`, FAT32, `gigabyte.bin` en la raíz
+- [x] Repo publicado en <https://github.com/Lunatico0/LunaticOS>
+
+### Falta — en este orden
+
+| # | Qué | Dónde | Detalle |
+|:-:|---|---|---|
+| 1 | ⚠️ **Robocopy final de Claude** (con Claude CERRADO) | 🖥️ PC-VIEJA | [Fase 1.3 bis](#13-bis-️-el-último-paso-antes-de-apagar--el-robocopy-de-claude) · [`docs/restaurar-claude.md`](docs/restaurar-claude.md) |
+| 2 | Apagar · desconectar **D: y E:** · dejar solo el NVMe | 🔧 | [Fase 3](#fase-3--desarmar-y-montar-1-h) |
+| 3 | Montar placa + CPU + RAM + **GPU** (el 11400F no tiene video) | 🔧 | [Fase 3](#fase-3--desarmar-y-montar-1-h) |
+| 4 | **Flashear la BIOS** — `Del` → `F8` → Q-Flash | 🔧 | [Fase 4](#fase-4--placa-nueva--flashear-la-bios) · [`docs/bios-update.md`](docs/bios-update.md) |
+| 5 | **Después** de flashear: Secure Boot + TPM + CSM off + AHCI | 🔧 | [Fase 5](#fase-5--placa-nueva--configurar-la-bios) |
+| 6 | Grabar la ISO al pendrive con **Rufus** (no Ventoy) | 💻 NOTEBOOK | [Fase 6](#fase-6--notebook--grabar-la-iso-al-pendrive) |
+| 7 | Instalar — `F12` → UEFI del pendrive | 🔧 | [Fase 7](#fase-7--placa-nueva--instalar-30-40-min) |
+| 8 | Contraseña · drivers · activación | 🔧 | [Fase 8](#fase-8--primer-arranque-antes-de-reconectar-los-discos) |
+| 9 | Reconectar discos · letras · carpetas · **restaurar Claude** | 🔧 | [Fase 9](#fase-9--reconectar-los-otros-discos-y-reordenar) · [`docs/restaurar-claude.md`](docs/restaurar-claude.md) |
+| 10 | Verificación final · `winget import` · Valorant | 🔧 | [Fase 10](#fase-10--verificación-final-y-reinstalación) |
+
+### Los tres números que vas a necesitar
+
+```
+SHA256 de la ISO   4E9DB8D7E14D7A57A89C2BEEDADDF4044B22BC68ED84D3E7D6609D3BED0BA451
+BIOS a instalar    F13b  (11,58 MB · 2025/06/10 · checksum 1510)
+Disco a formatear  NVMe WDC WDS480G2G0C · 447 GB · el UNICO conectado al instalar
+```
+
+### Si algo se rompe
+
+| Problema | Ir a |
+|---|---|
+| La BIOS no ve el pendrive / Q-Flash Plus no titila | [`docs/bios-update.md`](docs/bios-update.md) — *Si algo sale mal* |
+| La placa no postea, no da imagen | [Fase 4 camino B](#camino-b--la-placa-no-da-imagen-o-queda-en-bucle) |
+| El instalador pide idioma o product key | El unattend no se aplicó → [`docs/dia-d.md`](docs/dia-d.md) |
+| Valorant tira `VAN9001` | Secure Boot y/o TPM apagados → [Fase 5](#fase-5--placa-nueva--configurar-la-bios) |
+| Windows no activa | [Fase 8](#fase-8--primer-arranque-antes-de-reconectar-los-discos) |
+| Claude perdió skills / MCP / memoria | [`docs/restaurar-claude.md`](docs/restaurar-claude.md) |
+
+### Mapa de documentos
+
+| Archivo | Para qué |
+|---|---|
+| **`TIMELINE.md`** *(este)* | El orden. Empezá acá. |
+| [`docs/bios-update.md`](docs/bios-update.md) | BIOS y pendrive: los tres caminos de flasheo y sus fallas |
+| [`docs/dia-d-respaldo.md`](docs/dia-d-respaldo.md) | No perder nada: respaldos, licencia, reconectar discos |
+| [`docs/dia-d.md`](docs/dia-d.md) | La instalación en sí y qué verificar |
+| [`docs/restaurar-claude.md`](docs/restaurar-claude.md) | Dejar Claude como estaba: reglas, skills, MCP, memoria |
+| [`PROXIMA-SESION.md`](PROXIMA-SESION.md) | Handoff autosuficiente — **leelo si abrís Claude en la notebook** |
+| [`docs/decisiones.md`](docs/decisiones.md) | El "por qué" de cada decisión técnica del proyecto |
+
+> 📌 **Nota para el futuro:** `TIMELINE.md`, `docs/bios-update.md`, `docs/dia-d-respaldo.md`
+> y `docs/restaurar-claude.md` describen **este** hardware y **este** caso. A otra persona
+> no le sirven igual. Cuando el día D termine, se borran — el resto del repo (el pipeline)
+> es genérico y se queda.
+
+---
 
 ## Leyenda — dónde se hace cada cosa
 
