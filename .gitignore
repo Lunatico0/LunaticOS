@@ -23,6 +23,7 @@ desktop.ini
 .vs/
 .idea/
 .serena/
+.playwright-mcp/
 
 # Perfil local del usuario (cada uno tiene el suyo)
 perfil.json

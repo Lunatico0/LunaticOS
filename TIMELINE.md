@@ -49,8 +49,12 @@ Clonar el repo te da los scripts, **no la ISO**.
       **7,44 GB**, y queda acá para que no dependas de `E:\_migracion\iso-sha256.txt`:
 
   ```
-  2A5F4574BC7689DB92C5C922DAF01223B920B005936C4CFFFFB2D7B883E0CE32
+  4E9DB8D7E14D7A57A89C2BEEDADDF4044B22BC68ED84D3E7D6609D3BED0BA451
   ```
+
+  > ISO **regenerada el 31/07 22:32**. La anterior era del 30/07 23:24 y le faltaba el
+  > commit `4f51f02` (nombre de usuario elegible / lo pide el OOBE). Si ves el hash
+  > `2A5F4574...` en algún lado, es de la ISO vieja: **está mal**.
 
   ```powershell
   (Get-FileHash "C:\ruta\donde\quedo\Win11_25H2_Pro_debloat.iso" -Algorithm SHA256).Hash
