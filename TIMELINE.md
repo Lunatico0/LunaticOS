@@ -31,6 +31,21 @@ No hay nada que hacer acá. Está listado para que sepas de dónde venís.
 - [x] Respaldos automatizables corridos a `E:\_migracion`: `winget-export.json`,
       `programas-instalados.txt`, `autoruns-*.reg`, `.ssh`, `.gitconfig`,
       `claude\.claude`, `claude\engram`, `iso-sha256.txt`
+- [x] **ISO regenerada** el 31/07 22:32 (la anterior no tenía el commit `4f51f02`).
+- [x] **ISO en la notebook, hash verificado con `sha256sum` → OK.**
+- [x] **BIOS F13b + drivers** (chipset ×3, audio, lan) bajados y también en la notebook.
+      Copia local en `E:\_migracion\drivers-b560m` — 13 archivos verificados.
+- [x] Carpetas de trabajo del pendrive salvadas en `E:\pendrive-backup`
+      (`Artemisa.Presupuestador`, `Codigo Gestion Cubiertas`, `pasteleria`).
+      Las 6 ISOs viejas se descartaron por decisión del usuario: son re-descargables.
+- [x] 🔧 **PENDRIVE LISTO PARA FLASHEAR** — `F:` etiquetado `BIOS-GB`, **FAT32**, **una
+      sola partición de 16 GB** (el resto sin asignar; Rufus recupera el disco entero
+      después). En la raíz: `gigabyte.bin` + `B560MAORUSELITE.F13b` + `Efiflash.efi` +
+      `EFI\BOOT\` para el camino por UEFI shell.
+
+      > `Clear-Disk` falla con "Failed" aunque el proceso esté elevado. Se resuelve
+      > quitando las letras de unidad primero y usando **`diskpart`** (`clean` →
+      > `create partition primary size=16384` → `format fs=fat32 quick`).
 
 ---
 
