@@ -90,17 +90,48 @@ Clonar el repo te da los scripts, **no la ISO**.
 Lo automatizable ya corrió. Esto no se puede scriptear:
 
 - [ ] **Marcadores del navegador** — exportar (o confirmar que la sincronización está al día).
-- [ ] **Configs de apps que no sincronizan** y que usás en serio: Macro Deck, SteelSeries,
-      Razer, Figma. Revisá `%APPDATA%` y `%LOCALAPPDATA%` de esas.
-- [ ] **Máquinas virtuales en C:**, si tenés alguna que te importe. Las del proyecto
-      (`LunaticOS-Test`, `Debloat-Test`) son descartables.
-- [ ] ⚠️ **Repetir el robocopy de `.claude` y `engram` con Claude Code CERRADO.** Es
-      incremental, tarda segundos. La copia hecha con Claude abierto puede tener archivos
-      de sesión en uso e incompletos.
+- [x] **Configs de apps** — hecho: Macro Deck, SteelSeries, Razer, Figma, Discord,
+      droidcam, codex y VS Code (`settings.json` + 39 extensiones) en
+      `E:\_migracion\configs-apps`.
+- [x] **Máquinas virtuales** — no hay nada que hacer: `LunaticOS-Test` y `Debloat-Test`
+      viven en `E:\Workspace\...\work\`, o sea **en E:, que no se formatea**. Y son
+      descartables.
+- [x] **Navegadores** — Firefox Sync está **activo y al día**, así que los marcadores
+      personales ya están en la nube. Igual se respaldaron los perfiles completos de
+      Firefox y Chrome en `E:\_migracion\navegadores`.
+      ⚠️ Las contraseñas de **Chrome** están cifradas con **DPAPI** (atadas al usuario y a
+      la máquina): **no se van a poder descifrar** con el usuario nuevo. Las de Firefox sí,
+      porque `logins.json` se descifra con `key4.db` y los dos se copiaron juntos.
+
+### 1.3 bis ⚠️ EL ÚLTIMO PASO ANTES DE APAGAR — el robocopy de Claude
+
+**Corrélo recién cuando no vayas a usar Claude más.** Detalle completo en
+[`docs/restaurar-claude.md`](restaurar-claude.md).
+
+1. Cerrá Claude Code del todo (ninguna ventana, ningún proceso).
+2. Abrí **PowerShell** (no hace falta admin).
+3. Pegá los tres comandos:
+
   ```powershell
   robocopy "$env:USERPROFILE\.claude" "E:\_migracion\claude\.claude" /E /R:1 /W:1 /NFL /NDL
   robocopy "$env:LOCALAPPDATA\engram" "E:\_migracion\claude\engram" /E /R:1 /W:1 /NFL /NDL
+  Copy-Item "$env:USERPROFILE\.claude.json" "E:\_migracion\claude\claude.json" -Force
   ```
+
+4. En el resumen, la columna **`Failed` tiene que decir 0**.
+
+- [ ] Corrido con Claude **cerrado**, `Failed = 0`
+
+**Qué hace:** copia tus reglas, skills, agents, plugins, configuración de MCP e historial.
+Es **incremental** — solo lo que cambió, tarda segundos.
+
+**Por qué va último:** `engram` es una base SQLite en **un solo archivo**. Copiarla con
+Claude corriendo puede llevarse una copia a mitad de escritura: una base rota que parece
+sana hasta que la abrís.
+
+> ⚠️ **Son TRES rutas, no una.** `.claude.json` es un archivo **suelto**, hermano de la
+> carpeta `.claude` — un robocopy de la carpeta **no lo agarra**. Ya nos pasó.
+
 - [ ] ⚠️ `.claude\.credentials.json` viene ahí adentro: **tratalo como una contraseña.**
 
 ### 1.4 Vaciar el pendrive
@@ -286,10 +317,15 @@ Detalle en `docs\dia-d-respaldo.md` PARTE 3.
       Desktop, Pictures, Music, Videos. Cuando pregunte si mover los archivos: **sí**.
 - [ ] ⚠️ **NO importes los `.reg` exportados.** El usuario nuevo se llama distinto y las
       rutas de AppData no coinciden. Son **referencia** para rehacerlo a mano.
-- [ ] **Restaurar Claude** con Claude Code **cerrado**: copiar de vuelta `.claude` y
-      `engram` desde `E:\_migracion\claude\`.
-      ⚠️ El usuario nuevo **no se llama `Administrator`**: si algo adentro tiene rutas
-      absolutas al perfil viejo, hay que ajustarlo.
+- [ ] **Restaurar Claude** — paso a paso en [`docs/restaurar-claude.md`](restaurar-claude.md),
+      con la tabla de qué puede fallar y qué hacer. Con Claude Code **cerrado**:
+  ```powershell
+  robocopy "E:\_migracion\claude\.claude" "$env:USERPROFILE\.claude" /E /R:1 /W:1 /NFL /NDL
+  robocopy "E:\_migracion\claude\engram" "$env:LOCALAPPDATA\engram" /E /R:1 /W:1 /NFL /NDL
+  Copy-Item "E:\_migracion\claude\claude.json" "$env:USERPROFILE\.claude.json" -Force
+  ```
+      ⚠️ El usuario nuevo **no se llama `Administrator`**: los plugins guardan `installPath`
+      absoluto y hay que reinstalar los que no carguen. El login de Claude se vuelve a pedir.
 
 ---
 
