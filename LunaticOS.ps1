@@ -191,6 +191,8 @@ function Build-FlagCatalog {
        Note='Deja el clima. En 25H2 el feed de noticias MSN viene apagado, asi que no trae publicidad.' }
     @{ Key='RemoveEdgeBrowser'; Name='Bloquear el navegador Edge'; Rec=$true
        Note='Edge queda invisible e inejecutable (IFEO), pero WebView2 sigue actualizandose solo. NECESITAS instalar otro navegador y ponerlo como predeterminado.' }
+    @{ Key='LimpiarReincidentes'; Name='Volver a quitar los appx que reinstala Windows'; Rec=$true
+       Note='Medido: Dev Home y CrossDevice vuelven 11 min DESPUES del boot, los trae Windows Update. Deja una tarea que los quita 10 min despues de cada logon, y que SE BORRA SOLA tras 3 corridas sin encontrar nada.' }
     @{ Key='DisableLocation';   Name='Desactivar ubicacion (policy)'; Rec=$false
        Note='CUIDADO: esto BLOQUEA el panel Privacidad > Ubicacion en gris y no lo podes reactivar desde Settings. Ademas choca con el clima de Widgets. Por eso viene desmarcado.' }
     @{ Key='BlockCloudContent'; Name='Bloquear contenido sugerido (policy)'; Rec=$false
@@ -540,6 +542,10 @@ function Invoke-Pipeline {
     @{ n='07-remove-edge.ps1';    d='bloquear Edge' }
     @{ n='10-personalizar.ps1';   d='personalizacion (tema, color)' }
     @{ n='11-apps.ps1';           d='instalador de programas' }
+    # La 12 va ANTES de la 8 porque la 8 copia SetupComplete.cmd al WIM, y la 12
+    # genera el script que SetupComplete va a programar. Al reves, SetupComplete
+    # crearia una tarea que apunta a un archivo que todavia no existe.
+    @{ n='12-reincidentes.ps1';   d='tarea que limpia los appx que vuelven' }
     @{ n='08-inject-runtime.ps1'; d='SetupComplete + autounattend' }
     @{ n='09-build-iso.ps1';      d='cerrar WIM y armar la ISO' }
   )
@@ -1636,9 +1642,48 @@ function Invoke-SelfTest {
   foreach ($f in @('00-prepare-wim.ps1','01-remove-appx.ps1','02-remove-onedrive.ps1',
                    '03-privacy-policies.ps1','04-services.ps1','05-ui-tweaks.ps1',
                    '06-features.ps1','07-remove-edge.ps1','10-personalizar.ps1',
-                   '11-apps.ps1','08-inject-runtime.ps1','09-build-iso.ps1')) {
+                   '11-apps.ps1','12-reincidentes.ps1','08-inject-runtime.ps1',
+                   '09-build-iso.ps1')) {
     Chk "existe scripts\$f" (Test-Path (Join-Path $root "scripts\$f"))
   }
+
+  # ======================================================================
+  #  FASE 12: la tarea de reincidentes
+  #
+  #  Medido en VM el 2026-08-08: DevHome y CrossDevice VUELVEN 11 minutos
+  #  despues del boot, los trae Windows Update. La fase 1 los habia quitado
+  #  bien (esta en el log del build). Como SetupComplete y RunOnce corren
+  #  mucho antes de esa ventana, la limpieza va en una tarea programada.
+  # ======================================================================
+  Chk 'el flag LimpiarReincidentes existe en el catalogo de la TUI' `
+      (@(Build-FlagCatalog | Where-Object { $_.Key -eq 'LimpiarReincidentes' }).Count -eq 1)
+  Chk 'y viene marcado por defecto' `
+      ([bool](Build-FlagCatalog | Where-Object { $_.Key -eq 'LimpiarReincidentes' } | ForEach-Object { $_.Rec }))
+
+  $sc = Get-Content (Join-Path $root 'config\SetupComplete.cmd') -Raw
+  Chk 'SetupComplete.cmd CREA la tarea de reincidentes' ($sc -match 'schtasks /Create /TN "LunaticOS-Reincidentes"')
+  Chk 'la tarea corre ONLOGON con retraso (no inmediata: los appx vuelven despues)' `
+      ($sc -match '/SC ONLOGON' -and $sc -match '/DELAY')
+  Chk 'la tarea corre elevada (Remove-AppxProvisionedPackage lo exige)' ($sc -match '/RL HIGHEST')
+  # Lo que NO tiene que hacer: quitar apps ahi mismo. Si alguien "mejora" esto
+  # metiendo un Remove-Appx en SetupComplete, no encuentra nada y el bug vuelve
+  # disfrazado de arreglo.
+  #
+  # Se filtran las lineas REM antes de buscar: el archivo EXPLICA en un comentario
+  # por que no se usa Remove-AppxProvisionedPackage ahi, y un match sobre el texto
+  # crudo lo tomaba como si fuera codigo. Un test que se dispara con su propia
+  # documentacion le ensena al proximo a borrar la documentacion.
+  $scCodigo = (@($sc -split "`r?`n" | Where-Object { $_ -notmatch '^\s*(REM|::)' }) -join "`n")
+  Chk 'SetupComplete NO intenta quitar appx por su cuenta (corre demasiado temprano)' `
+      ($scCodigo -notmatch 'Remove-AppxProvisionedPackage|Remove-AppxPackage') `
+      '-> hay un Remove-Appx en SetupComplete: corre antes del OOBE, no va a encontrar nada'
+
+  $f12 = Get-Content (Join-Path $root 'scripts\12-reincidentes.ps1') -Raw
+  Chk 'la fase 12 respeta la guarda $AppxKeep' ($f12 -match 'AppxKeep -notcontains')
+  Chk 'la fase 12 respeta su flag' ($f12 -match "Flags\['LimpiarReincidentes'\]")
+  Chk 'el script generado se autoelimina la tarea tras 3 corridas limpias' `
+      ($f12 -match 'Unregister-ScheduledTask' -and $f12 -match '\$n -ge 3') `
+      '-> sin autoborrado queda un residente que le desinstala apps al usuario para siempre'
 
   Write-Host ''
   if ($script:fail -eq 0) { Write-Host "  TODO OK (0 fallas)" -ForegroundColor Green }

@@ -71,6 +71,10 @@ $Global:Flags = @{
   BypassMsAccount   = $true   # cuenta local en el OOBE (autounattend)
   ShowWeatherWidget = $true   # clima en la taskbar (Widgets). En 25H2 el feed MSN viene OFF por defecto.
   RemoveEdgeBrowser = $true   # saca el NAVEGADOR Edge offline (fase 7). WebView2 SIEMPRE se conserva.
+  # Tarea que vuelve a quitar los appx que Windows REINSTALA solo despues de
+  # instalar (medido: DevHome y CrossDevice vuelven 11 min despues del boot).
+  # Se autoelimina tras 3 corridas sin hallazgos. Ver fase 12.
+  LimpiarReincidentes = $true
 }
 
 # --- Region del equipo ---

@@ -97,6 +97,38 @@ if exist "%SystemRoot%\Setup\Scripts\lunaticos-servicios.cmd" (
   call "%SystemRoot%\Setup\Scripts\lunaticos-servicios.cmd"
 )
 
+REM ============================================================================
+REM  --- Appx REINCIDENTES: la tarea que los limpia mas tarde ---
+REM
+REM  ACA NO SE QUITA NINGUNA APP, Y ES A PROPOSITO. Es la misma leccion que este
+REM  archivo ya documenta arriba para Edge: SetupComplete corre ANTES del OOBE, y
+REM  los reincidentes vuelven mucho despues. Medido en VM el 2026-08-08:
+REM
+REM      15:16  Windows instalado
+REM      15:24  boot
+REM      15:21  Microsoft.MicrosoftEdge.Stable   (5 min despues de instalar)
+REM      15:34  MicrosoftWindows.CrossDevice     (11 min DESPUES del boot)
+REM      15:35  Microsoft.Windows.DevHome        (idem)
+REM
+REM  Un Remove-AppxProvisionedPackage en este punto no encuentra nada y deja la
+REM  sensacion de que el problema se resolvio. Peor que no hacer nada.
+REM
+REM  Lo que SI puede hacer SetupComplete es DEJAR PROGRAMADO al que los limpia.
+REM  ONLOGON + 10 minutos de retraso cae despues de la ventana en que vuelven, y
+REM  al ser ONLOGON tambien cubre las reinstalaciones de los updates siguientes.
+REM
+REM  /RL HIGHEST porque Remove-AppxProvisionedPackage -Online necesita elevacion.
+REM  /RU SYSTEM porque tiene que poder tocar los paquetes de todos los usuarios.
+REM  La tarea SE BORRA SOLA tras 3 corridas sin hallazgos: lo hace el propio
+REM  script, para no quedar como un residente que le desinstala al usuario una app
+REM  que el instalo a proposito.
+REM ============================================================================
+if exist "%SystemRoot%\Setup\Scripts\lunaticos-reincidentes.ps1" (
+  schtasks /Create /TN "LunaticOS-Reincidentes" /SC ONLOGON /DELAY 0010:00 ^
+    /RU SYSTEM /RL HIGHEST /F ^
+    /TR "powershell.exe -NoProfile -ExecutionPolicy Bypass -File \"%SystemRoot%\Setup\Scripts\lunaticos-reincidentes.ps1\"" >nul 2>&1
+)
+
 REM --- Autolimpieza ---
 del "%~f0" >nul 2>&1
 exit /b 0
