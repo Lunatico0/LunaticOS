@@ -80,7 +80,64 @@ $Global:Flags = @{
   # instalar (medido: DevHome y CrossDevice vuelven 11 min despues del boot).
   # Se autoelimina tras 3 corridas sin hallazgos. Ver fase 12.
   LimpiarReincidentes = $true
+  # Reemplaza los pins del menu Inicio por $StartPins. Sin esto, el Inicio arranca
+  # con Outlook, Solitaire, WhatsApp y LinkedIn pineados -- apps que NO estan
+  # instaladas: son placeholders que las descargan de la Store al tocarlos.
+  ConfigurarMenuInicio = $true
 }
+
+# ===========================================================================
+#  PINS DEL MENU INICIO
+#
+#  EL PROBLEMA (medido en VM el 2026-08-08): el menu Inicio de un Windows recien
+#  instalado viene con Outlook, Solitaire, WhatsApp, LinkedIn, Xbox y Edge
+#  pineados. Y NINGUNA de esas apps esta instalada: son PLACEHOLDERS que al
+#  tocarlos las descargan de la Store. Medido en la misma corrida:
+#
+#    Microsoft.MicrosoftSolitaireCollection   instalado=False  provisioned=False
+#    Microsoft.OutlookForWindows              instalado=False  provisioned=False
+#    5319275A.WhatsAppDesktop                 instalado=False  provisioned=False
+#
+#  Get-StartApps (que lista apps reales) no incluye ninguna. El debloat SI las
+#  habia sacado: lo que queda es publicidad dibujada en el layout de fabrica.
+#
+#  POR QUE LAS POLICIES DE "CONTENIDO SUGERIDO" NO ALCANZAN, y ya estaban puestas:
+#  son dos mecanismos distintos. SilentInstalledAppsEnabled, PreInstalledAppsEnabled,
+#  SubscribedContent-* y SystemPaneSuggestionsEnabled apagan las sugerencias
+#  DINAMICAS (la seccion "Recommended", que quedo con un solo item: Get Started).
+#  Los PINS INICIALES vienen en el layout por defecto y ninguna de esas policies
+#  los toca.
+#
+#  POR QUE NO SE USA LayoutModification.json, que es lo que dice medio internet:
+#  se probo EN LA VM y NO FUNCIONA en 25H2. Se escribio en el perfil del usuario,
+#  se borro start2.bin y se reinicio el shell: el menu se regenero con los MISMOS
+#  pins de fabrica (y encima agrego Edge). Ese mecanismo es de Windows 10 y de las
+#  primeras builds de 11.
+#
+#  LO QUE SI FUNCIONA: la policy ConfigureStartPins, verificada en la VM. Y NO pone
+#  el cartel "administrada por tu organizacion": se abrio Settings >
+#  Personalization > Start y esta limpio, con sus toggles operativos. O sea que
+#  hace el trabajo SIN el costo que tiene BlockCloudContent.
+#
+#  COMO SE ARMA UN ID: packagedAppId para appx (el AUMID que devuelve
+#  Get-StartApps), desktopAppLink para programas de escritorio (.lnk del menu).
+#  Un id que apunta a una app que no esta instalada simplemente no se dibuja: no
+#  rompe nada, asi que se pueden dejar los de apps opcionales.
+# ===========================================================================
+$Global:StartPins = @(
+  'Microsoft.WindowsTerminal_8wekyb3d8bbwe!App'          # Terminal
+  'Microsoft.WindowsNotepad_8wekyb3d8bbwe!App'           # Bloc de notas
+  'Microsoft.WindowsCalculator_8wekyb3d8bbwe!App'        # Calculadora
+  'Microsoft.ScreenSketch_8wekyb3d8bbwe!App'             # Recortes (Win+Shift+S)
+  'Microsoft.Paint_8wekyb3d8bbwe!App'                    # Paint
+  'Microsoft.Windows.Photos_8wekyb3d8bbwe!App'           # Fotos
+  'Microsoft.WindowsStore_8wekyb3d8bbwe!App'             # Store: sin esto winget queda huerfano en la UI
+  'Microsoft.SecHealthUI_8wekyb3d8bbwe!SecHealthUI'      # Seguridad de Windows
+  # NO se pinea Edge: la fase 7 lo bloquea por IFEO, un pin a un exe inejecutable
+  # es un icono que no hace nada y confunde.
+  # Tampoco se pinean los programas de winget: se instalan DESPUES del primer
+  # login, y un pin a algo que todavia no existe no se dibuja.
+)
 
 # --- Region del equipo ---
 #   11 = Argentina. No afecta los formatos de fecha/hora/moneda (eso es UserLocale=es-AR en

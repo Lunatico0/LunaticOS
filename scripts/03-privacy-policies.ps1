@@ -156,4 +156,68 @@ Use-OfflineHive -HivePath (Join-Path $mount 'Windows\System32\config\SOFTWARE') 
   $nA = @($pol | Where-Object { $_.g -eq 'A' }).Count
   $nB = @($pol | Where-Object { $_.g -eq 'B' }).Count
   Write-Step ("aplicadas {0} policies de privacidad (grupo A: {1}, CloudContent opt-in: {2})" -f $pol.Count, $nA, $nB) 'Green'
+
+  # =========================================================================
+  #  PINS DEL MENU INICIO -- ConfigureStartPins
+  #
+  #  Va ACA y no en la fase 5 porque es una policy de MAQUINA
+  #  (HKLM\SOFTWARE\Policies), y este es el unico lugar del pipeline que tiene el
+  #  hive SOFTWARE montado.
+  #
+  #  Sin esto, el menu Inicio de un Windows recien instalado viene con Outlook,
+  #  Solitaire, WhatsApp y LinkedIn pineados, y ninguna esta instalada: son
+  #  placeholders que las descargan de la Store al tocarlos. Verificado en VM.
+  #
+  #  Es REG_SZ con el JSON adentro, no un DWORD: por eso no entra en la tabla $pol.
+  #  Y el JSON va en UNA linea, sin saltos: con saltos la policy se ignora en
+  #  silencio (el menu queda con los pins de fabrica y nada avisa).
+  #
+  #  #####################################################################
+  #  NO SE USA Invoke-Reg (reg.exe) ACA, Y ESTO YA FALLO UNA VEZ.
+  #
+  #  reg.exe recibe el valor por LINEA DE COMANDOS y se come las comillas
+  #  dobles del JSON. Medido en VM el 2026-08-08: la policy quedo escrita como
+  #
+  #      {pinnedList:[{packagedAppId:Microsoft.WindowsTerminal_...}]}
+  #
+  #  sin UNA sola comilla. Eso no es JSON, Windows lo descarta EN SILENCIO, y el
+  #  menu Inicio aparecio con Outlook, Solitaire, WhatsApp y LinkedIn otra vez.
+  #  El build habia dicho "menu Inicio: 8 pins propios" y era mentira.
+  #
+  #  Peor todavia: la policy escrita PARECE correcta si uno mira que la clave
+  #  existe. Hay que mirar el CONTENIDO. Por eso el -SelfTest ahora verifica que
+  #  las comillas sobrevivan al viaje hasta el registro, no solo que el JSON que
+  #  generamos sea valido (eso ya lo era, y no alcanzo).
+  #
+  #  New-ItemProperty escribe por API, sin pasar por un shell: las comillas
+  #  llegan intactas. $root viene como "HKLM\OFF_SW" (formato reg.exe) y hay que
+  #  convertirlo a "HKLM:\OFF_SW" para los cmdlets de PowerShell.
+  #  #####################################################################
+  # =========================================================================
+  if ($Global:Flags['ConfigurarMenuInicio'] -and @($Global:StartPins).Count -gt 0) {
+    $items = @($Global:StartPins | ForEach-Object {
+      if ($_ -like '*\*' -or $_ -like '*.lnk') { '{"desktopAppLink":"' + ($_ -replace '\\','\\') + '"}' }
+      else                                     { '{"packagedAppId":"' + $_ + '"}' }
+    })
+    $jsonPins = '{"pinnedList":[' + ($items -join ',') + ']}'
+
+    $psRoot = $root -replace '^HKLM\\', 'HKLM:\'
+    $kExp   = Join-Path $psRoot 'Policies\Microsoft\Windows\Explorer'
+    New-Item -Path $kExp -Force -ErrorAction SilentlyContinue | Out-Null
+    New-ItemProperty -Path $kExp -Name 'ConfigureStartPins'             -Value $jsonPins -PropertyType String -Force | Out-Null
+    New-ItemProperty -Path $kExp -Name 'ConfigureStartPins_ProviderSet' -Value 1         -PropertyType DWord  -Force | Out-Null
+
+    # Se RELEE lo escrito y se compara. Si las comillas no sobrevivieron, se corta
+    # el build: es preferible a entregar una ISO que dice haber configurado el menu
+    # y no lo hizo.
+    $leido = (Get-ItemProperty -Path $kExp -Name 'ConfigureStartPins' -ErrorAction SilentlyContinue).ConfigureStartPins
+    if ($leido -ne $jsonPins) {
+      throw ("ConfigureStartPins se escribio distinto de lo que se pidio. " +
+             "Esperado ($($jsonPins.Length) chars) vs leido ($($leido.Length) chars). " +
+             "Si al leido le faltan las comillas dobles, algo volvio a pasar el valor por un shell.")
+    }
+    Write-Step ("menu Inicio: {0} pins propios, releidos OK del hive (fuera Outlook/Solitaire/WhatsApp/LinkedIn, que eran placeholders)" -f @($Global:StartPins).Count) 'Green'
+  } else {
+    Write-Step "menu Inicio: se deja el layout de fabrica (ConfigurarMenuInicio=false)" 'DarkGray'
+  }
 }

@@ -192,6 +192,8 @@ function Build-FlagCatalog {
        Note='Deja el clima. En 25H2 el feed de noticias MSN viene apagado, asi que no trae publicidad.' }
     @{ Key='RemoveEdgeBrowser'; Name='Bloquear el navegador Edge'; Rec=$true
        Note='Edge queda invisible e inejecutable (IFEO), pero WebView2 sigue actualizandose solo. NECESITAS instalar otro navegador y ponerlo como predeterminado.' }
+    @{ Key='ConfigurarMenuInicio'; Name='Menu Inicio sin publicidad (pins propios)'; Rec=$true
+       Note='El Inicio de fabrica viene con Outlook, Solitaire, WhatsApp y LinkedIn pineados, y NINGUNA esta instalada: son placeholders que las bajan de la Store al tocarlos. Esto los reemplaza por la lista de $StartPins.' }
     @{ Key='LimpiarReincidentes'; Name='Volver a quitar los appx que reinstala Windows'; Rec=$true
        Note='Medido: Dev Home y CrossDevice vuelven 11 min DESPUES del boot, los trae Windows Update. Deja una tarea que los quita 10 min despues de cada logon, y que SE BORRA SOLA tras 3 corridas sin encontrar nada.' }
     @{ Key='DisableLocation';   Name='Desactivar ubicacion (policy)'; Rec=$false
@@ -1708,6 +1710,87 @@ function Invoke-SelfTest {
   Chk 'SetupComplete NO intenta quitar appx por su cuenta (corre demasiado temprano)' `
       ($scCodigo -notmatch 'Remove-AppxProvisionedPackage|Remove-AppxPackage') `
       '-> hay un Remove-Appx en SetupComplete: corre antes del OOBE, no va a encontrar nada'
+
+  # ======================================================================
+  #  PINS DEL MENU INICIO
+  #
+  #  Medido en VM el 2026-08-08: el Inicio de fabrica viene con Outlook,
+  #  Solitaire, WhatsApp y LinkedIn pineados y NINGUNA esta instalada (son
+  #  placeholders que las bajan de la Store). Las policies de "contenido
+  #  sugerido" que el repo ya ponia NO los tocan: son otro mecanismo.
+  #
+  #  Y LayoutModification.json tampoco: se probo en la VM y en 25H2 no hace
+  #  nada. Lo unico que funciona es la policy ConfigureStartPins.
+  # ======================================================================
+  Chk 'el flag ConfigurarMenuInicio existe en el catalogo' `
+      (@(Build-FlagCatalog | Where-Object { $_.Key -eq 'ConfigurarMenuInicio' }).Count -eq 1)
+  Chk '$StartPins no esta vacio' (@($Global:StartPins).Count -gt 0)
+  $f03 = Get-Content (Join-Path $root 'scripts\03-privacy-policies.ps1') -Raw
+  Chk 'la fase 3 escribe ConfigureStartPins' ($f03 -match 'ConfigureStartPins')
+  # Tiene que ser un STRING con el JSON adentro, no un DWORD. El patron cambio el
+  # 2026-08-08: antes se escribia con Invoke-Reg (/t REG_SZ) y ahora por API
+  # (-PropertyType String), porque reg.exe se comia las comillas del JSON.
+  Chk 'y lo escribe como STRING (es un JSON, no un DWORD)' `
+      ($f03 -match "ConfigureStartPins'\s+-Value \`$jsonPins -PropertyType String")
+  Chk 'la fase 3 respeta el flag ConfigurarMenuInicio' ($f03 -match "Flags\['ConfigurarMenuInicio'\]")
+  # El JSON tiene que salir en UNA linea: con saltos, la policy se ignora EN
+  # SILENCIO y el menu queda con los pins de fabrica sin que nada avise.
+  $jsonPrueba = '{"pinnedList":[' + ((@($Global:StartPins) | ForEach-Object { '{"packagedAppId":"' + $_ + '"}' }) -join ',') + ']}'
+  Chk 'el JSON de pins queda en UNA linea (con saltos la policy se ignora en silencio)' `
+      ($jsonPrueba -notmatch "`r|`n")
+  Chk 'y es JSON valido' ($(try { $null = $jsonPrueba | ConvertFrom-Json; $true } catch { $false })) `
+      ("-> " + $jsonPrueba.Substring(0, [Math]::Min(80, $jsonPrueba.Length)))
+
+  # ======================================================================
+  #  EL TEST QUE FALTABA, Y POR ESO EL BUG LLEGO A LA VM
+  #
+  #  El test de arriba solo verifica que el JSON que GENERAMOS sea valido. Lo
+  #  era. Lo que no verificaba es que sobreviviera el VIAJE HASTA EL REGISTRO.
+  #
+  #  Medido el 2026-08-08: la fase 3 escribia con Invoke-Reg (reg.exe), que
+  #  recibe el valor por linea de comandos y SE COME LAS COMILLAS DOBLES. La
+  #  policy quedaba como {pinnedList:[{packagedAppId:...}]} sin una sola
+  #  comilla, Windows la descartaba EN SILENCIO, y el menu Inicio aparecia con
+  #  Outlook/Solitaire/WhatsApp/LinkedIn en una instalacion limpia. El log del
+  #  build decia "menu Inicio: 8 pins propios" y era mentira.
+  #
+  #  Este test escribe de verdad en una clave temporal de HKCU con los DOS
+  #  metodos y compara. Es la unica forma de que el mecanismo quede probado sin
+  #  montar un WIM.
+  # ======================================================================
+  $kTmp = 'HKCU:\Software\LunaticOS-SelfTest-' + [guid]::NewGuid().ToString('N')
+  try {
+    New-Item -Path $kTmp -Force | Out-Null
+
+    # Metodo bueno: API.
+    New-ItemProperty -Path $kTmp -Name 'PorApi' -Value $jsonPrueba -PropertyType String -Force | Out-Null
+    $leidoApi = (Get-ItemProperty -Path $kTmp -Name 'PorApi').PorApi
+    Chk 'el JSON de pins sobrevive escrito por API (New-ItemProperty)' ($leidoApi -eq $jsonPrueba) `
+        ("-> se escribieron $($jsonPrueba.Length) chars y se leyeron $($leidoApi.Length)")
+    Chk 'y conserva las comillas dobles' (($leidoApi -split '"').Count -gt 5) `
+        ("-> leido: " + $leidoApi.Substring(0, [Math]::Min(60, $leidoApi.Length)))
+
+    # Metodo malo, el que causo el bug: reg.exe. Se deja el test para que quede
+    # DEMOSTRADO por que no se usa, y para que salte si alguien lo reintroduce.
+    $null = & reg.exe add ($kTmp -replace '^HKCU:', 'HKCU') /v 'PorRegExe' /t REG_SZ /d $jsonPrueba /f 2>&1
+    $leidoReg = (Get-ItemProperty -Path $kTmp -Name 'PorRegExe' -ErrorAction SilentlyContinue).PorRegExe
+    Chk 'DEMOSTRADO: reg.exe PIERDE las comillas (por eso la fase 3 usa la API)' `
+        ($leidoReg -ne $jsonPrueba) `
+        '-> reg.exe conservo el JSON: cambio de comportamiento, revisar si ya se puede usar'
+
+    # Y que la fase 3 use el metodo bueno.
+    Chk 'la fase 3 escribe ConfigureStartPins por API, no con Invoke-Reg' `
+        ($f03 -match "New-ItemProperty[^\r\n]*ConfigureStartPins") `
+        '-> si volvio a Invoke-Reg, las comillas se pierden y el menu queda con la publicidad'
+    Chk 'y RELEE lo escrito para no confiar (falla el build si no coincide)' `
+        ($f03 -match 'ConfigureStartPins.*-ErrorAction SilentlyContinue\)\.ConfigureStartPins' -or
+         $f03 -match '\$leido -ne \$jsonPins')
+  }
+  finally { Remove-Item -Path $kTmp -Recurse -Force -ErrorAction SilentlyContinue }
+  # Edge NO se pinea: la fase 7 lo deja inejecutable por IFEO, y un pin a algo que
+  # no abre es un icono que miente.
+  Chk 'no se pinea Edge (la fase 7 lo bloquea por IFEO)' `
+      (-not (@($Global:StartPins) -match 'MicrosoftEdge|msedge'))
 
   $f12 = Get-Content (Join-Path $root 'scripts\12-reincidentes.ps1') -Raw
   Chk 'la fase 12 respeta la guarda $AppxKeep' ($f12 -match 'AppxKeep -notcontains')
