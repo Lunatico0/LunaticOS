@@ -125,8 +125,14 @@ function Build-AppxCatalog {
 function Build-ServiceCatalog {
   $cat = @()
   foreach ($s in $ServicesDisable) {
+    # La nota sale de $ServicesNotes (config.ps1). Antes del 2026-08-08 aca habia un
+    # texto fijo -- "Se deshabilita por defecto en el perfil de LunaticOS" -- para los
+    # 42 servicios: el bloque que se apaga POR DEFAULT era el unico que no decia ni
+    # QUE ES. El fallback queda por si alguien agrega un servicio y se olvida la nota,
+    # pero el -SelfTest falla en ese caso, asi que no deberia verse nunca.
     $cat += @{ Key = $s; Name = $s; Rec = $true; Cat = 'apagado'
-               Note = 'Se deshabilita por defecto en el perfil de LunaticOS.' }
+               Note = if ($ServicesNotes[$s]) { $ServicesNotes[$s] }
+                      else { "SIN NOTA: agregala en `$ServicesNotes de config.ps1." } }
   }
   foreach ($s in $ServicesOptional.Keys | Sort-Object) {
     $cat += @{ Key = $s; Name = $s; Rec = $false; Cat = 'opcional'; Note = $ServicesOptional[$s] }
@@ -143,6 +149,19 @@ function Build-FeatureCatalog {
     'Language.Handwriting'     = 'Escritura a mano. Sin pantalla tactil no sirve.'
     'WindowsMediaPlayer'       = 'Feature del WMP legacy. NO tocar MediaPlayback, que es el motor de reproduccion.'
     'WorkFolders-Client'       = 'Work Folders (sincronizacion corporativa).'
+
+    # --- Agregados el 2026-08-08 (diferencial medido contra la imagen 25H2 montada) ---
+    'VBSCRIPT'                 = 'Motor de VBScript. DEPRECADO por Microsoft y vector clasico de malware por adjunto (.vbs). No perdes nada salvo que tengas scripts .vbs viejos de laburo.'
+    'WMIC'                     = 'Herramienta wmic.exe. DEPRECADA por Microsoft (se reemplaza por PowerShell CIM) y muy usada por malware para reconocimiento. Si tenes scripts .bat viejos que la llamen, se rompen: se reescriben con Get-CimInstance.'
+    'Windows.Telnet.Client'    = 'Cliente telnet. Protocolo SIN CIFRADO. Hoy casi solo se usa para probar si un puerto responde, y para eso sirve Test-NetConnection.'
+    'Windows.TFTP.Client'      = 'Cliente TFTP. Sin cifrado ni autenticacion. Se usa para flashear routers y switches: si administras equipos de red, dejalo.'
+    'Windows.SimpleTCP.Content'= 'Simple TCP/IP Services: echo, daytime, quote of the day. Legado de los anos 90, sin uso real.'
+    'Windows.DirectoryServices.ADAM.Client.Content' = 'AD LDS (Active Directory Lightweight Directory Services). Enterprise puro, cero uso en una PC de escritorio.'
+    'Windows.TerminalServices.AppServerClient'      = 'Cliente de RemoteApp: abrir una app publicada en un servidor como si fuera local. Si tu laburo te da apps por RemoteApp, dejalo.'
+    'MicrosoftWindowsPowerShellV2'     = 'PowerShell 2.0, DEPRECADO por Microsoft. Es el bypass clasico del logging: "powershell -version 2" evade ScriptBlockLogging y AMSI. Sacarlo NO afecta a PowerShell 5.1 ni a 7.'
+    'MicrosoftWindowsPowerShellV2Root' = 'El componente padre de PowerShell 2.0. Va junto con el anterior: si sacas uno solo, el otro queda colgado.'
+    'SmbDirect'                = 'SMB sobre RDMA (red de baja latencia de datacenter). Sin una placa de red RDMA no hace literalmente nada. Ninguna placa de consumo la tiene.'
+    'Printing-Foundation-InternetPrinting-Client' = 'Impresion IPP por internet. NO es imprimir en tu red local: eso es Printing-Foundation-Features y se conserva. Sacalo salvo que imprimas en una impresora remota por IPP.'
   }
   $cat = @()
   foreach ($c in $CapabilitiesRemove) {
@@ -175,7 +194,9 @@ function Build-FlagCatalog {
     @{ Key='DisableLocation';   Name='Desactivar ubicacion (policy)'; Rec=$false
        Note='CUIDADO: esto BLOQUEA el panel Privacidad > Ubicacion en gris y no lo podes reactivar desde Settings. Ademas choca con el clima de Widgets. Por eso viene desmarcado.' }
     @{ Key='BlockCloudContent'; Name='Bloquear contenido sugerido (policy)'; Rec=$false
-       Note='CUIDADO: son las 3 policies de CloudContent y son LAS QUE PONEN EL CARTEL "administradas por tu organizacion" en Settings. Ademas ocultan opciones de Personalization > Background. Cortan las sugerencias de apps y el contenido promocionado. Por eso viene desmarcado: el resto del debloat (telemetria, Copilot, Recall, ads) NO necesita esto.' }
+       # La nota entra en 3 lineas de 74 a proposito: mas largo y el wrap descarta el
+       # final EN SILENCIO. Lo que se perdia era justo el "por eso viene desmarcado".
+       Note='CUIDADO: las 3 policies de CloudContent son LAS QUE PONEN EL CARTEL "administradas por tu organizacion" en Settings, y ocultan opciones de Personalization. Viene desmarcado: el resto del debloat NO las necesita.' }
   )
 }
 
@@ -400,7 +421,11 @@ function Show-MainMenu($p) {
     $nFlag = @(Get-Picked $p.flags).Count
 
     $perfilExiste = Test-Path $ProfilePath
-    $sel = Show-TuiMenu -Subtitle "perfil: $(Split-Path $ProfilePath -Leaf)$(if(-not $perfilExiste){' (todavia no guardado)'})" -Entries @(
+    $sel = Show-TuiMenu -Subtitle "perfil: $(Split-Path $ProfilePath -Leaf)$(if(-not $perfilExiste){' (todavia no guardado)'})" -Banner @(
+      'G = generar YA: ya viene con el PERFIL RECOMENDADO puesto (los *).'
+      '1-7 = ajustar a mano. ESPACIO marca, A todos, N ninguno.'
+      'R = volver a SOLO los recomendados, si te pasaste debloateando.'
+    ) -Entries @(
       @{ Key='appx';  Label='1. Apps preinstaladas a quitar';   Info="$nAppx marcadas"
          Note='Appx provisioned de la imagen. Las [BLINDADO] se muestran para que veas que se conserva y por que, pero no se pueden marcar.' }
       @{ Key='svc';   Label='2. Servicios a deshabilitar';      Info="$nSvc marcados"
@@ -414,7 +439,9 @@ function Show-MainMenu($p) {
       @{ Key='apps';  Label='6. Programas a instalar';          Info="$nApps marcados"
          Note='Se instalan solos por winget en el primer arranque (hace falta internet). Los drivers de GPU no estan en winget: te deja la lista con las URLs.' }
       @{ Key='cuenta'; Label='7. Cuenta de usuario';            Info=$(if ([bool]$p.usuario['crear']) { "crear '$($p.usuario['nombre'])'" } else { 'la pide el OOBE' })
-         Note='Tu nombre de usuario. Si lo creas aca, el OOBE no pregunta nada. Si elegis que lo pida el OOBE, ojo: Windows 11 25H2 te va a empujar a cuenta Microsoft.' }
+         # 2 lineas de 74 es TODO lo que dibuja el menu. Lo que se cortaba era el
+         # final: "te va a empujar a cuenta Microsoft", que es el dato que importa.
+         Note='Tu nombre de usuario. Si lo creas aca, el OOBE no pregunta nada. Si lo deja al OOBE, 25H2 te empuja a cuenta Microsoft.' }
       @{ Key='-' }
       @{ Key='gen';   Label='G. GENERAR LA ISO (guarda el perfil)'; Info='~45-60 min'; Accent=$true
          Note='GUARDA el perfil.json y arranca el pipeline completo: rearma la imagen desde la ISO original. No cierres la consola.' }
@@ -434,7 +461,7 @@ function Show-MainMenu($p) {
         $locked    = @($cat | Where-Object { $_.Locked })
         [void](Show-TuiChecklist -Title '1. Apps preinstaladas a QUITAR de la imagen' `
                -Items ($editables + $locked) -Selected $p.appx `
-               -Legend 'marcado = SE QUITA - los [BLINDADO] se ignoran siempre')
+               -Legend 'marcado = SE QUITA. Los [BLINDADO] no se tocan')
         foreach ($l in $locked) { $p.appx.Remove($l.Key) }
       }
       'svc'   { [void](Show-TuiChecklist -Title '2. Servicios a DESHABILITAR' -Items (Build-ServiceCatalog) -Selected $p.servicios -Legend 'marcado = Start=4 (Disabled)') }
@@ -563,6 +590,39 @@ function Invoke-Pipeline {
     LogLine ''
     $inicio = Get-Date
     $i = 0
+
+    # ======================================================================
+    #  QUE EL PERFIL LLEGUE A LAS FASES. Agregado el 2026-08-08.
+    #
+    #  Cada fase arranca con  . "$PSScriptRoot\config.ps1"  y eso PISABA las
+    #  globales que Set-GlobalsFromProfile acababa de poner. Resultado medido en
+    #  VM: se apagaban los 42 servicios de config.ps1 y CERO de los 21
+    #  opcionales que el usuario habia marcado en la TUI. El header de este
+    #  archivo prometia lo contrario desde el dia 1.
+    #
+    #  Ahora config.ps1 termina aplicando el perfil que apunta esta variable, y
+    #  como cada fase lo dot-sourcea, el override se re-aplica en TODAS. Ver el
+    #  bloque grande al final de config.ps1.
+    #
+    #  Se setea aca y no antes porque el perfil ya se escribio a disco: el MAIN
+    #  llama a Export-Profile antes de Invoke-Pipeline, en las dos ramas ('save'
+    #  y 'gen'). Si algun dia eso cambia, este archivo tiene que apuntar al
+    #  perfil EFECTIVO, no a uno viejo.
+    # ======================================================================
+    $envProfileAnterior = $env:LUNATICOS_PROFILE
+    if (Test-Path $ProfilePath) {
+      $env:LUNATICOS_PROFILE = (Resolve-Path $ProfilePath).Path
+      LogLine "  [perfil] las fases van a leer: $env:LUNATICOS_PROFILE" 'DarkGray'
+    } else {
+      # Sin perfil en disco las fases usan los defaults de config.ps1, que es el
+      # comportamiento historico y el correcto para 'correr una fase a mano'.
+      $env:LUNATICOS_PROFILE = $null
+      # Las llaves NO son cosmeticas: "$ProfilePath:" hace que PowerShell lea
+      # "$ProfilePath:" como una variable con calificador de unidad (tipo $env:)
+      # y tira un ParserError que mata el archivo entero.
+      LogLine "  [perfil] no hay ${ProfilePath}: las fases usan los defaults de config.ps1" 'DarkGray'
+    }
+
     foreach ($f in $fases) {
       $i++
       $path = Join-Path $root "scripts\$($f.n)"
@@ -606,6 +666,11 @@ function Invoke-Pipeline {
     $ErrorActionPreference = $prevEAP
     if ($script:transcriptOn) { try { Stop-Transcript | Out-Null } catch { } }
     $script:buildLog = $log
+    # La variable se restaura SIEMPRE, tambien con Ctrl+C. Si quedara seteada, la
+    # proxima fase corrida A MANO leeria un perfil viejo en vez de los defaults --
+    # justo el comportamiento que este repo se propuso conservar. Y peor: seria un
+    # estado invisible que sobrevive a la consola.
+    $env:LUNATICOS_PROFILE = $envProfileAnterior
   }
 }
 
@@ -1374,6 +1439,198 @@ function Invoke-SelfTest {
   # --- Los blindados NO deben poder salir en AppxRemove ---
   $leak = @($Global:AppxRemove | Where-Object { $AppxKeep -contains $_ })
   Chk 'ningun appx BLINDADO en la lista de remocion' ($leak.Count -eq 0) ("-> " + ($leak -join ', '))
+
+  # ======================================================================
+  #  LAS NOTAS TIENEN QUE ENTRAR EN PANTALLA
+  #
+  #  POR QUE ESTE TEST EXISTE: la nota es el corazon del proyecto -- nadie
+  #  deberia marcar algo sin leer que hace. Pero el wrap NO avisa cuando no
+  #  entra: dibuja las primeras N lineas y DESCARTA el resto en silencio.
+  #  O sea que la parte mas importante de la herramienta se puede perder sin
+  #  que falle nada, sin log y sin sintoma.
+  #
+  #  Medido el 2026-08-08, antes de este test: CUATRO notas se cortaban. La
+  #  peor era BlockCloudContent (5 lineas de 3): lo que se perdia era
+  #  justamente el "por eso viene desmarcado", o sea el motivo entero. Y la
+  #  del menu de cuenta de usuario perdia "te va a empujar a cuenta
+  #  Microsoft", que es el unico dato por el que alguien elegiria la otra
+  #  opcion.
+  #
+  #  El presupuesto sale de tui.ps1 y son dos numeros distintos:
+  #    checklists -> 3 lineas de (TuiWidth - 4)
+  #    menu       -> 2 lineas de (TuiWidth - 4)
+  #  Con el ancho maximo (78) eso es 222 y 148 caracteres.
+  # ======================================================================
+  $anchoNota = 78 - 4
+  function Test-NotasEntran($nombre, $items, [int]$lineas) {
+    $malas = @()
+    foreach ($it in @($items)) {
+      if (-not $it.Note) { continue }
+      $w = @(Wrap-TuiText $it.Note $anchoNota)
+      if ($w.Count -gt $lineas) {
+        $malas += ("{0} (usa {1} de {2}: se pierde '...{3}')" -f `
+                   $it.Key, $w.Count, $lineas, ($w[$lineas..($w.Count-1)] -join ' '))
+      }
+    }
+    Chk "$nombre : ninguna nota se corta en pantalla" ($malas.Count -eq 0) `
+        ("-> " + ($malas -join ' | '))
+  }
+
+  Test-NotasEntran '1. appx'          (Build-AppxCatalog)     3
+  Test-NotasEntran '2. servicios'     (Build-ServiceCatalog)  3
+  Test-NotasEntran '3. features'      (Build-FeatureCatalog)  3
+  Test-NotasEntran '4. flags'         (Build-FlagCatalog)     3
+  Test-NotasEntran '5. personalizacion' $PersonalizacionCatalog 3
+  Test-NotasEntran '6. programas'     $AppCatalog             3
+
+  # Las notas del MENU PRINCIPAL tienen 2 lineas, no 3. Se leen del codigo fuente
+  # porque Show-MainMenu arma las entradas inline: extraerlas a una variable solo
+  # para el test seria mover produccion para poder testearla.
+  $srcMenu = Get-Content (Join-Path $root 'LunaticOS.ps1') -Raw
+  $ini = $srcMenu.IndexOf('function Show-MainMenu')
+  $fin = $srcMenu.IndexOf('switch ($sel)', $ini)
+  $notasMenu = @([regex]::Matches($srcMenu.Substring($ini, $fin - $ini), "Note='([^']+)'") |
+                 ForEach-Object { @{ Key = 'menu'; Note = $_.Groups[1].Value } })
+  Chk 'se encontraron las notas del menu principal en el fuente' ($notasMenu.Count -ge 7) `
+      ("-> encontro " + $notasMenu.Count + ": si esto baja, el regex dejo de matchear y el test de abajo NO prueba nada")
+  Test-NotasEntran 'menu principal' $notasMenu 2
+
+  # ======================================================================
+  #  LOS -Legend TAMBIEN TIENEN QUE ENTRAR
+  #
+  #  El contador de las checklists se dibuja asi (tui.ps1):
+  #    "  {0} de {1} seleccionados   ({2})" -f $count, $cnt, $Legend
+  #
+  #  Son 25 caracteres fijos + los dos numeros + el Legend. Write-TuiLine
+  #  recorta a TuiWidth y NO avisa. Medido el 2026-08-08: el Legend de la
+  #  pantalla de appx tenia 53 caracteres y se cortaba en "...se ignoran
+  #  sie" -- sin el parentesis de cierre, o sea con pinta de que la
+  #  herramienta se colgo a mitad de la frase.
+  #
+  #  Presupuesto: 78 - 25 - 6 (dos numeros de hasta 3 digitos) = 47.
+  # ======================================================================
+  # ======================================================================
+  #  TODO SERVICIO QUE SE APAGA POR DEFAULT TIENE QUE DECIR QUE ES
+  #
+  #  Es la contracara del test de arriba: ese verifica que la nota ENTRE en
+  #  pantalla, este verifica que la nota EXISTA. Sin este, agregar un servicio
+  #  a $ServicesDisable lo deja con el cartel "SIN NOTA" en la TUI -- y el
+  #  usuario tendria que apagar algo a ciegas, que es exactamente lo que este
+  #  proyecto no hace.
+  # ======================================================================
+  $sinNota = @($Global:ServicesDisable | Where-Object { -not $Global:ServicesNotes[$_] })
+  Chk 'todo servicio de $ServicesDisable tiene nota en $ServicesNotes' ($sinNota.Count -eq 0) `
+      ("-> sin nota: " + ($sinNota -join ', ') + " (agregalas en config.ps1)")
+
+  # Mismo criterio para los catalogos que traen la nota adentro del item. Un item
+  # sin Note dibuja "(sin nota)" en pantalla con tres lineas vacias abajo: se ve
+  # como si la herramienta estuviera a medio hacer. Medido el 2026-08-08: 47 de los
+  # 84 programas no tenian nota, incluidos kubectl, helm, terraform, eza, fd y jq,
+  # que no se explican por el nombre.
+  foreach ($c in @(
+      @{ N = 'appx';           Items = @(Build-AppxCatalog) }
+      @{ N = 'features';       Items = @(Build-FeatureCatalog) }
+      @{ N = 'flags';          Items = @(Build-FlagCatalog) }
+      @{ N = 'personalizacion';Items = @($PersonalizacionCatalog) }
+      @{ N = 'programas';      Items = @($AppCatalog) }
+    )) {
+    $faltan = @($c.Items | Where-Object { -not $_.Note } | ForEach-Object { $_.Key })
+    Chk "todo item de '$($c.N)' tiene Note" ($faltan.Count -eq 0) `
+        ("-> sin Note (" + $faltan.Count + "): " + ($faltan -join ', '))
+  }
+
+  # Y al reves: una nota huerfana es un servicio que se saco de la lista y quedo
+  # el texto colgado. No rompe nada, pero es codigo muerto que confunde al leer.
+  $huerfanas = @($Global:ServicesNotes.Keys | Where-Object { $Global:ServicesDisable -notcontains $_ })
+  Chk 'ninguna nota huerfana en $ServicesNotes' ($huerfanas.Count -eq 0) `
+      ("-> sobran: " + ($huerfanas -join ', ') + " (el servicio ya no esta en ServicesDisable)")
+
+  # Un servicio no puede estar en las dos listas: si esta en Disable se apaga
+  # siempre, y aparecer tambien como "opcional" le dice al usuario que puede
+  # elegir algo que en realidad ya esta decidido.
+  $enAmbas = @($Global:ServicesDisable | Where-Object { $Global:ServicesOptional.ContainsKey($_) })
+  Chk 'ningun servicio esta en ServicesDisable Y en ServicesOptional' ($enAmbas.Count -eq 0) `
+      ("-> en las dos: " + ($enAmbas -join ', '))
+
+  $maxLegend = 78 - 25 - 6
+  $legends = @([regex]::Matches($srcMenu, "-Legend '([^']+)'") | ForEach-Object { $_.Groups[1].Value })
+  Chk 'se encontraron los -Legend en el fuente' ($legends.Count -ge 6) `
+      ("-> encontro " + $legends.Count + ": si baja, el regex dejo de matchear y el test de abajo NO prueba nada")
+  $largos = @($legends | Where-Object { $_.Length -gt $maxLegend } |
+                         ForEach-Object { "'$_' ($($_.Length) de $maxLegend)" })
+  Chk 'ningun -Legend se corta en la linea del contador' ($largos.Count -eq 0) `
+      ("-> " + ($largos -join ' | '))
+
+  # ======================================================================
+  #  EL PERFIL TIENE QUE SOBREVIVIR AL DOT-SOURCE DE config.ps1
+  #
+  #  ESTE ES EL TEST DEL BUG DEL 2026-08-08, y es el mas importante de todos:
+  #  las 12 fases arrancan con  . "$PSScriptRoot\config.ps1"  y eso PISABA las
+  #  globales del perfil. OJO con la ruta: dentro de scripts\ ese $PSScriptRoot ES
+  #  scripts\, pero en ESTE archivo es la raiz del repo, asi que aca abajo el
+  #  dot-source va por "$root\scripts\config.ps1". No es un detalle: escrito con
+  #  $PSScriptRoot desde aca, el test buscaba <repo>\config.ps1 y no existe.
+  #  globales del perfil. Se apagaban los 42 servicios del archivo y CERO de los
+  #  21 opcionales que el usuario habia marcado en la TUI. verify-live lo detecto
+  #  recien despues de 25 minutos de build + instalacion en VM.
+  #
+  #  El test simula exactamente eso: setea LUNATICOS_PROFILE, dot-sourcea
+  #  config.ps1 como lo hace una fase, y verifica que gane el perfil.
+  #  Corre en 2 segundos y cubre lo que costaba media hora descubrir.
+  # ======================================================================
+  $tmpPerfil = Join-Path $env:TEMP ("lunaticos-selftest-perfil-" + [guid]::NewGuid().ToString('N') + ".json")
+  $envAnterior = $env:LUNATICOS_PROFILE
+  try {
+    # Un perfil que pide MENOS appx y MAS servicios que los defaults: si gana
+    # config.ps1, los dos numeros van a delatarlo.
+    $pTest = New-DefaultProfile
+    foreach ($k in @($pTest.appx.Keys)) { $pTest.appx[$k] = $false }
+    $pTest.appx[@($pTest.appx.Keys)[0]] = $true                       # 1 solo appx
+    foreach ($k in @($pTest.servicios.Keys)) { $pTest.servicios[$k] = $true }  # TODOS los servicios
+    Export-Profile $pTest $tmpPerfil 'selftest'
+
+    $svcEsperados  = @($pTest.servicios.Keys).Count
+    $appxDefaults  = @($Global:AppxRemove).Count
+
+    $env:LUNATICOS_PROFILE = $tmpPerfil
+    # Esto es lo que hace CADA fase, textual (04-services.ps1 linea 14):
+    . "$root\scripts\config.ps1"
+
+    Chk 'el perfil GANA sobre config.ps1 al dot-sourcearlo (servicios)' `
+        (@($Global:ServicesDisable).Count -eq $svcEsperados) `
+        ("-> quedaron " + @($Global:ServicesDisable).Count + " y el perfil pedia " + $svcEsperados +
+         ". Si dice 42, config.ps1 volvio a pisar el perfil: es EL bug del 2026-08-08")
+    Chk 'el perfil GANA tambien cuando pide MENOS que el default (appx)' `
+        (@($Global:AppxRemove).Count -eq 1) `
+        ("-> quedaron " + @($Global:AppxRemove).Count + " y el perfil pedia 1 (el default son $appxDefaults)")
+
+    # Sin la variable, los defaults vuelven: el modo "correr una fase a mano".
+    $env:LUNATICOS_PROFILE = $null
+    . "$root\scripts\config.ps1"
+    Chk 'sin LUNATICOS_PROFILE vuelven los defaults (fase corrida a mano)' `
+        (@($Global:AppxRemove).Count -eq $appxDefaults) `
+        ("-> quedaron " + @($Global:AppxRemove).Count + ", se esperaban $appxDefaults")
+
+    # Un perfil roto tiene que ABORTAR, no seguir con defaults en silencio: una ISO
+    # que no es la pedida es peor que un build que falla en el segundo 1.
+    'esto no es json {{{' | Set-Content $tmpPerfil -Encoding UTF8
+    $env:LUNATICOS_PROFILE = $tmpPerfil
+    $tiro = $false
+    try { . "$root\scripts\config.ps1" } catch { $tiro = $true }
+    Chk 'un perfil ILEGIBLE aborta el build (no sigue con defaults en silencio)' $tiro `
+        '-> no tiro: buildearia una ISO distinta de la que el usuario pidio, sin avisar'
+
+    $env:LUNATICOS_PROFILE = Join-Path $env:TEMP 'no-existe-este-perfil-jamas.json'
+    $tiro2 = $false
+    try { . "$root\scripts\config.ps1" } catch { $tiro2 = $true }
+    Chk 'un perfil INEXISTENTE tambien aborta' $tiro2
+  }
+  finally {
+    $env:LUNATICOS_PROFILE = $envAnterior
+    Remove-Item $tmpPerfil -Force -ErrorAction SilentlyContinue
+    # Se recarga limpio para no dejar las globales del test a los chequeos de abajo.
+    . "$root\scripts\config.ps1"
+  }
 
   # --- Las fases que el pipeline invoca tienen que existir ---
   foreach ($f in @('00-prepare-wim.ps1','01-remove-appx.ps1','02-remove-onedrive.ps1',

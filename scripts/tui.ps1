@@ -367,12 +367,19 @@ function Show-TuiChecklist {
 
     for ($i = $top; $i -lt $end; $i++) {
       $it   = $Items[$i]
-      $mark = if ($Selected[$it.Key]) { 'x' } else { ' ' }
+      # Un Locked se dibuja con '-' y no con ' ': un checkbox vacio se lee como
+      # "todavia no lo marque", y el usuario prueba. Con el guion se ve que no es
+      # marcable ANTES de apretar la tecla, que es cuando sirve saberlo.
+      $mark = if ($it.Locked) { '-' } elseif ($Selected[$it.Key]) { 'x' } else { ' ' }
       $rec  = if ($it.Rec) { ' *' } else { '  ' }
       $cur  = if ($i -eq $idx) { '>' } else { ' ' }
       $cat  = if ($it.Cat) { "  [$($it.Cat)]" } else { '' }
       $line = "{0} [{1}]{2} {3}{4}" -f $cur, $mark, $rec, $it.Name, $cat
-      $col  = if ($i -eq $idx) { 'Yellow' } elseif ($Selected[$it.Key]) { 'Green' } else { 'Gray' }
+      # DarkGray para los Locked: el gris apagado es la senal visual de "esto no se
+      # toca". El cursor (Yellow) sigue ganando, asi que se ve donde estas parado.
+      $col  = if ($i -eq $idx) { 'Yellow' }
+              elseif ($it.Locked) { 'DarkGray' }
+              elseif ($Selected[$it.Key]) { 'Green' } else { 'Gray' }
       Write-TuiLine $line $col
     }
     # Rellenar el resto para tapar el frame anterior
@@ -409,7 +416,14 @@ function Show-TuiChecklist {
       'End'        { $idx = [Math]::Max(0, $cnt - 1) }
       'Spacebar'   {
         # El guarda es por la lista vacia: $Selected[$null] TIRA (medido).
-        if ($cnt -gt 0) {
+        # Y el de Locked es la GUARDA REAL de los [BLINDADO]. Antes del 2026-08-08
+        # no existia: la checklist los marcaba igual, el usuario veia [x], el
+        # contador subia, y al volver al menu Show-MainMenu los borraba del perfil
+        # en silencio. La nota del menu PROMETIA "no se pueden marcar" y el
+        # comentario del codigo decia "no entran a la lista editable" -- pero el
+        # menu los pasaba igual en ($editables + $locked). La intencion estaba
+        # escrita en dos lugares y no implementada en ninguno.
+        if ($cnt -gt 0 -and -not $Items[$idx].Locked) {
           $key = $Items[$idx].Key
           $new = -not $Selected[$key]
           $Selected[$key] = $new
@@ -427,14 +441,16 @@ function Show-TuiChecklist {
       'Escape'     { return $false }
       default {
         switch ("$($k.KeyChar)".ToUpper()) {
-          'A' { foreach ($it in $Items) { $Selected[$it.Key] = $true }
+          # Los tres atajos SALTEAN los Locked por el mismo motivo que Spacebar: una
+          # guarda que "A todos" puede pasar por arriba no es una guarda.
+          'A' { foreach ($it in $Items) { if (-not $it.Locked) { $Selected[$it.Key] = $true } }
                 # Con "todos" los excluyentes quedarian todos en $true: dejar solo el primero.
                 foreach ($grp in $grupos) {
                   $first = $true
                   foreach ($g in $grp) { $Selected[$g] = $first; $first = $false }
                 } }
-          'N' { foreach ($it in $Items) { $Selected[$it.Key] = $false } }
-          'R' { foreach ($it in $Items) { $Selected[$it.Key] = [bool]$it.Rec } }
+          'N' { foreach ($it in $Items) { if (-not $it.Locked) { $Selected[$it.Key] = $false } } }
+          'R' { foreach ($it in $Items) { if (-not $it.Locked) { $Selected[$it.Key] = [bool]$it.Rec } } }
         }
       }
     }
@@ -448,17 +464,34 @@ function Show-TuiChecklist {
 function Show-TuiMenu {
   param(
     [Parameter(Mandatory)][array]$Entries,
-    [string]$Subtitle = ''
+    [string]$Subtitle = '',
+    # Lineas fijas arriba de las opciones. Existe para lo que el menu NO decia:
+    # que la seleccion YA viene cargada con el perfil recomendado. Sin eso, el que
+    # abre la TUI por primera vez no sabe que puede apretar G y terminar ahi, y se
+    # pone a marcar 200 cosas creyendo que arranca de cero.
+    [string[]]$Banner = @()
   )
   $idx = 0
   while ($true) {
-    # `$null =` NO es cosmetico: cualquier cosa que quede en el pipeline dentro de
-    # esta funcion se SUMA al valor de retorno, y el retorno de aca es la Key que
+    # La asignacion NO es cosmetica: cualquier cosa que quede en el pipeline dentro
+    # de esta funcion se SUMA al valor de retorno, y el retorno de aca es la Key que
     # el menu principal usa para decidir que hacer. Ese bug ya paso en el repo con
-    # el exit code del self-test.
-    $null = Update-TuiLayout
+    # el exit code del self-test. Se guarda en $l (antes era `$null =`) porque el
+    # banner necesita saber el alto disponible; capturar en una variable saca la
+    # salida del pipeline igual que $null.
+    $l = Update-TuiLayout
     Reset-TuiCursor
     Show-TuiHeader $Subtitle
+    # El banner se omite en consolas bajas, y NO es un detalle cosmetico: este menu
+    # dibuja TODAS sus entradas (no pagina como las checklists), asi que ya usaba el
+    # presupuesto completo de Resolve-TuiLayout -- 15 lineas de chrome + 14 de
+    # contenido = 29. Cualquier linea extra empuja el footer fuera de pantalla, y el
+    # footer es donde dice como salir. Rows>=12 equivale a Height>=27, que es lo que
+    # necesita el menu con este banner de 3 lineas.
+    if ($Banner.Count -and $l.Rows -ge 12) {
+      Write-TuiLine ''
+      foreach ($b in $Banner) { Write-TuiLine ("  " + $b) 'Green' }
+    }
     Write-TuiLine ''
     for ($i = 0; $i -lt $Entries.Count; $i++) {
       $e = $Entries[$i]
@@ -486,7 +519,26 @@ function Show-TuiMenu {
       'DownArrow' { do { $idx = if ($idx -lt ($Entries.Count - 1)) { $idx + 1 } else { 0 } } while ($Entries[$idx].Key -eq '-') }
       'Enter'     { return $Entries[$idx].Key }
       'Escape'    { return $null }
-      default     { if ("$($k.KeyChar)".ToUpper() -eq 'Q') { return $null } }
+      default     {
+        $c = "$($k.KeyChar)".ToUpper()
+        if ($c -eq 'Q') { return $null }
+        # ATAJOS POR LA LETRA DEL LABEL. Agregado el 2026-08-08, y es un bug que
+        # este menu tuvo siempre: los labels dicen "1.", "2.", "G. GENERAR",
+        # "S. Guardar" -- o sea que PROMETEN un atajo -- y solo Q funcionaba. El
+        # resto eran decorativos: habia que navegar con flechas y apretar Enter.
+        # Se descubrio manejando la TUI con teclas inyectadas: se mando 'S' para
+        # guardar, el menu la ignoro y la cola de teclas se vacio.
+        #
+        # Se matchea "<letra>." al principio del Label, que es el formato que ya
+        # usaban todas las entradas. Nada de mapear teclas a mano: si alguien
+        # agrega "8. Otra cosa", el atajo 8 le funciona sin tocar esta funcion.
+        if ($c -match '^[0-9A-Z]$') {
+          foreach ($e in $Entries) {
+            if ($e.Key -eq '-') { continue }
+            if ("$($e.Label)" -match "^$([regex]::Escape($c))\.") { return $e.Key }
+          }
+        }
+      }
     }
   }
 }

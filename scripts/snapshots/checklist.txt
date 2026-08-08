@@ -1,0 +1,28 @@
+﻿DarkCyan   | ==============================================================================
+Cyan       |   LunaticOS  ~  constructor de ISO de Windows 11
+DarkGray   |   snapshot de checklist
+DarkCyan   | ==============================================================================
+White      |   1 de 3 seleccionados   (marcado = se quita)
+DarkGray   | ------------------------------------------------------------------------------
+Yellow     | > [x] * marcado y recomendado  [bloat]
+Gray       |   [ ]   sin marcar  [zona gris]
+DarkGray   |   [-]   blindado, no se toca  [BLINDADO]
+Gray       | 
+Gray       | 
+Gray       | 
+Gray       | 
+Gray       | 
+Gray       | 
+Gray       | 
+Gray       | 
+Gray       | 
+Gray       | 
+Gray       | 
+DarkGray   | ------------------------------------------------------------------------------
+Cyan       |   Nota corta de una linea.
+Gray       | 
+Gray       | 
+Gray       | 
+DarkGray   | ------------------------------------------------------------------------------
+DarkGray   |   flechas mover  ESPACIO marcar  A todos  N ninguno  R solo recomendados (*)
+DarkGray   |   ENTER confirmar         ESC volver sin guardar

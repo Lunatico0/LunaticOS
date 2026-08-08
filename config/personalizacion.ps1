@@ -142,7 +142,7 @@ $Global:PersonalizacionCatalog = @(
      Note='Lo aplica el tema de LunaticOS. Excluyente con las otras opciones de acento.' }
 
   @{ Key='acento-en-taskbar'; Name='Color de acento tambien en taskbar y bordes'; Rec=$false
-     Note='Pinta la barra de tareas con el color elegido en vez de negro/blanco. OJO: Windows SOLO permite esto con el tema OSCURO. Con tema claro la opcion aparece en gris en Settings y este valor no hace nada -- no es un error nuestro, es como funciona Windows.'
+     Note='Pinta la barra de tareas con el color elegido en vez de negro/blanco. OJO: Windows SOLO lo permite con el tema OSCURO. Con tema claro queda en gris en Settings y no hace nada: es de Windows, no un error nuestro.'
      Regs=@(
        # Esto NO es un color, es un interruptor: por eso si va como Regs.
        @{k='Software\Microsoft\Windows\CurrentVersion\Themes\Personalize'; v='ColorPrevalence'; d=1; t='dword'}

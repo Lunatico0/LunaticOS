@@ -41,6 +41,14 @@
   Exit code = cantidad de fallas (0 = todo OK). Lo consume scripts\test-e2e.ps1.
 #>
 
+param(
+  # Reescribe los snapshots de referencia con lo que se dibuja AHORA.
+  # Se usa a mano y MIRANDO el diff (git diff scripts\snapshots\). Un snapshot que
+  # se regenera sin leerlo no prueba nada: pasa a ser un registro de lo que hay,
+  # no de lo que se quiere.
+  [switch]$UpdateSnapshots
+)
+
 $ErrorActionPreference = 'Stop'
 
 . "$PSScriptRoot\tui.ps1"
@@ -412,6 +420,171 @@ Test-Case 'la tecla R' {
 }
 
 # ===========================================================================
+#  5-bis. LOS [BLINDADO] (Locked) NO SE PUEDEN MARCAR
+#
+#  POR QUE ESTE TEST EXISTE -- bug real, medido el 2026-08-08:
+#  la checklist SI dejaba marcar un appx blindado. El usuario apretaba ESPACIO
+#  sobre Microsoft.DesktopAppInstaller (winget), veia [x], el contador subia de
+#  18 a 19, volvia al menu y Show-MainMenu lo borraba del perfil en silencio.
+#
+#  Lo grave no es el bug, es que la intencion estaba escrita en DOS lugares y
+#  no implementada en ninguno:
+#    - la nota del menu prometia "pero no se pueden marcar"
+#    - el comentario del case 'appx' decia "los blindados no entran a la lista
+#      editable"... y abajo pasaba -Items ($editables + $locked)
+#  Separaba las dos listas en variables distintas y las volvia a concatenar.
+#
+#  Una guarda que la UI puede pasar por arriba no es una guarda. Y la de AppxKeep
+#  protege winget, la Store y la seguridad.
+# ===========================================================================
+Test-Case 'items Locked (los [BLINDADO])' {
+  $items = @(
+    @{ Key='libre1'; Name='libre uno';  Rec=$true;  Cat='bloat' }
+    @{ Key='libre2'; Name='libre dos';  Rec=$false; Cat='zona gris' }
+    @{ Key='blind1'; Name='blindado A'; Rec=$false; Cat='BLINDADO'; Locked=$true }
+    @{ Key='blind2'; Name='blindado B'; Rec=$false; Cat='BLINDADO'; Locked=$true }
+  )
+  $sel = [ordered]@{}
+  foreach ($i in $items) { $sel[$i.Key] = [bool]$i.Rec }
+
+  # --- ESPACIO sobre un Locked no hace nada ---
+  $r = Invoke-Checklist -Items $items -Selected $sel -Keys @('DownArrow','DownArrow','Spacebar','Enter')
+  Chk 'ESPACIO sobre un Locked NO lo marca' (-not $sel['blind1'])
+  Chk 'y el item libre de al lado sigue como estaba' ($sel['libre1'] -eq $true)
+
+  # --- Se DIBUJA distinto: [-] y no [ ] ---
+  $lineaBlind = @($r.Lines | Where-Object { $_ -match 'blindado A' })[-1]
+  Chk 'un Locked se dibuja con [-], no con [ ]' ($lineaBlind -match '\[-\]') ("-> [" + "$lineaBlind".TrimEnd() + "]")
+  Chk 'y no se dibuja como marcado [x]' ($lineaBlind -notmatch '\[x\]')
+
+  # --- 'A' todos NO los marca ---
+  foreach ($i in $items) { $sel[$i.Key] = $false }
+  Invoke-Checklist -Items $items -Selected $sel -Keys @('A','Enter') | Out-Null
+  Chk "'A' (todos) NO marca los Locked" ((-not $sel['blind1']) -and (-not $sel['blind2'])) `
+      ("-> blind1=" + $sel['blind1'] + " blind2=" + $sel['blind2'] + ": una guarda que 'todos' pasa por arriba no es guarda")
+  Chk "y 'A' SI marca los libres" (($sel['libre1'] -eq $true) -and ($sel['libre2'] -eq $true))
+
+  # --- 'R' recomendados tampoco ---
+  foreach ($i in $items) { $sel[$i.Key] = $false }
+  Invoke-Checklist -Items $items -Selected $sel -Keys @('R','Enter') | Out-Null
+  Chk "'R' (recomendados) NO marca los Locked" (-not $sel['blind1'])
+  Chk "y 'R' SI marca el recomendado libre" ($sel['libre1'] -eq $true)
+
+  # --- 'N' ninguno no los toca (ya estan en false, pero no debe escribirlos) ---
+  $sel['blind1'] = $true   # se fuerza a mano, como si viniera de un perfil viejo
+  Invoke-Checklist -Items $items -Selected $sel -Keys @('N','Enter') | Out-Null
+  Chk "'N' (ninguno) no toca los Locked (los deja como estaban)" ($sel['blind1'] -eq $true) `
+      '-> N no debe escribir sobre un Locked: el menu es el que limpia el perfil'
+
+  # --- El CONTADOR no puede subir por un Locked ---
+  foreach ($i in $items) { $sel[$i.Key] = $false }
+  $r2 = Invoke-Checklist -Items $items -Selected $sel -Keys @('DownArrow','DownArrow','Spacebar','Enter')
+  $cont = @($r2.Lines | Where-Object { $_ -match 'seleccionados' })
+  Chk 'el contador NO sube al apretar ESPACIO sobre un Locked' `
+      (("$($cont[0])" -replace '\s','') -eq ("$($cont[-1])" -replace '\s','')) `
+      ("-> primero: " + "$($cont[0])".Trim() + " | ultimo: " + "$($cont[-1])".Trim())
+}
+
+# ===========================================================================
+#  5-ter. GOLDEN SNAPSHOTS -- el frame COMPLETO, con COLOR
+#
+#  POR QUE HACEN FALTA si ya hay 200 tests: los otros tests verifican
+#  PROPIEDADES ("el footer esta", "el ancho no desborda", "R deja los
+#  recomendados"). Un snapshot verifica la PANTALLA. Es la unica forma de que
+#  falle algo que nadie penso en preguntar: un separador que cambia de color,
+#  el cursor que deja de resaltarse, una columna que se corre dos espacios, un
+#  [x] que aparece donde iba un [-].
+#
+#  Y POR QUE INCLUYEN EL COLOR: Write-Host devuelve un HostInformationMessage
+#  con ForegroundColor, y hasta el 2026-08-08 TODOS los tests del repo leian
+#  solo .Message y tiraban el color. En esta TUI el color ES informacion:
+#  Yellow = donde estas parado, Green = marcado, DarkGray = no se toca,
+#  Cyan = la nota. Un bug de color no lo veia ningun test.
+#
+#  Y POR QUE LOS ITEMS SON SINTETICOS Y NO EL CATALOGO REAL: si el snapshot
+#  dependiera de $ServicesDisable, agregar un servicio lo romperia, y un
+#  snapshot que se rompe en cada cambio de config se regenera sin mirarlo.
+#  Con items fijos, el snapshot solo cambia cuando cambia el DIBUJO -- que es
+#  justo lo que se quiere vigilar. Los catalogos reales ya los cubre el
+#  -SelfTest de LunaticOS.ps1 (notas y legends que entren en pantalla).
+# ===========================================================================
+$script:SnapDir = Join-Path $PSScriptRoot 'snapshots'
+
+function Get-FrameConColor($raw) {
+  @($raw | Where-Object { $_ -is [System.Management.Automation.InformationRecord] } |
+           ForEach-Object {
+             $m = $_.MessageData
+             '{0,-10} | {1}' -f "$($m.ForegroundColor)", "$($m.Message)".TrimEnd()
+           })
+}
+
+function Test-Snapshot([string]$Nombre, [string[]]$Actual) {
+  if (-not (Test-Path $script:SnapDir)) { New-Item -ItemType Directory -Path $script:SnapDir -Force | Out-Null }
+  $ruta = Join-Path $script:SnapDir "$Nombre.txt"
+
+  if ($UpdateSnapshots -or -not (Test-Path $ruta)) {
+    $Actual | Set-Content $ruta -Encoding UTF8
+    $verbo = if ($UpdateSnapshots) { 'REESCRITO' } else { 'CREADO' }
+    Chk "snapshot '$Nombre' $verbo (revisa el diff antes de commitear)" $true
+    return
+  }
+
+  $esperado = @(Get-Content $ruta -Encoding UTF8)
+  if ($esperado.Count -ne $Actual.Count) {
+    Chk "snapshot '$Nombre' coincide" $false `
+        ("-> el frame tiene $($Actual.Count) lineas y el snapshot $($esperado.Count)")
+    return
+  }
+  for ($i = 0; $i -lt $esperado.Count; $i++) {
+    if ($esperado[$i] -ne $Actual[$i]) {
+      Chk "snapshot '$Nombre' coincide" $false `
+          ("-> linea $($i+1):`n         esperado: [" + $esperado[$i] + "]`n         actual  : [" + $Actual[$i] + "]")
+      return
+    }
+  }
+  Chk "snapshot '$Nombre' coincide (frame de $($Actual.Count) lineas, con color)" $true
+}
+
+Test-Case 'golden snapshots' {
+  $Global:TuiSizeProvider = { @{ Width = 120; Height = 40 } }
+  try {
+    # --- Checklist: un item marcado, uno sin marcar, uno recomendado y un Locked ---
+    $items = @(
+      @{ Key='a'; Name='marcado y recomendado';    Rec=$true;  Cat='bloat';     Note='Nota corta de una linea.' }
+      @{ Key='b'; Name='sin marcar';               Rec=$false; Cat='zona gris'; Note='Otra nota.' }
+      @{ Key='c'; Name='blindado, no se toca';     Rec=$false; Cat='BLINDADO'; Locked=$true; Note='BLINDADO: sacarlo rompe algo.' }
+    )
+    $sel = [ordered]@{ a = $true; b = $false; c = $false }
+    Send-TuiKeys @('Escape')
+    $raw = @(Show-TuiChecklist -Title 'snapshot de checklist' -Items $items -Selected $sel `
+             -Legend 'marcado = se quita' 6>&1)
+    Test-Snapshot 'checklist' (Get-FrameConColor $raw)
+
+    # --- Menu principal, con banner y con separadores ---
+    Send-TuiKeys @('Q')
+    $raw2 = @(Show-TuiMenu -Subtitle 'snapshot de menu' -Banner @(
+                'primera linea del banner'
+                'segunda linea del banner'
+              ) -Entries @(
+                @{ Key='uno';  Label='1. opcion uno'; Info='3 marcadas'; Note='Nota de la opcion uno.' }
+                @{ Key='dos';  Label='2. opcion dos'; Info='0 marcadas'; Note='Nota de la opcion dos.' }
+                @{ Key='-' }
+                @{ Key='gen';  Label='G. ACCION PRINCIPAL'; Info='~45 min'; Accent=$true; Note='La accion con Accent.' }
+                @{ Key='-' }
+                @{ Key='quit'; Label='Q. Salir'; Info='descarta'; Note='Sale sin guardar.' }
+              ) 6>&1)
+    Test-Snapshot 'menu' (Get-FrameConColor $raw2)
+
+    # --- Lista vacia: el caso que parece un bug si no dice nada ---
+    Send-TuiKeys @('Escape')
+    $raw3 = @(Show-TuiChecklist -Title 'snapshot de lista vacia' -Items @() `
+              -Selected ([ordered]@{}) -Legend 'sin items' 6>&1)
+    Test-Snapshot 'checklist-vacia' (Get-FrameConColor $raw3)
+  }
+  finally { $Global:TuiSizeProvider = $null }
+}
+
+# ===========================================================================
 #  6. Enter confirma, Escape cancela
 # ===========================================================================
 Test-Case 'Enter y Escape' {
@@ -611,6 +784,123 @@ Test-Case 'menu principal' {
   $ret = Invoke-Menu -Entries $entries -Keys @('Enter')
   Chk 'el menu devuelve UN solo valor (nada se cuela al pipeline)' (@($ret).Count -eq 1) `
       ("-> devolvio " + @($ret).Count + " objetos: el switch del menu principal elegiria cualquier cosa")
+
+  # --- ATAJOS POR LA LETRA DEL LABEL ---
+  # Bug real, medido el 2026-08-08: los labels dicen "1.", "G. GENERAR", "S. Guardar"
+  # -- prometen un atajo -- y SOLO Q funcionaba. Se descubrio manejando la TUI con
+  # teclas inyectadas para armar un perfil: se mando 'S' y el menu la ignoro.
+  $conAtajos = @(
+    @{ Key='appx'; Label='1. Apps preinstaladas'; Info='' }
+    @{ Key='svc';  Label='2. Servicios';          Info='' }
+    @{ Key='-' }
+    @{ Key='gen';  Label='G. GENERAR LA ISO';     Info=''; Accent=$true }
+    @{ Key='save'; Label='S. Guardar y salir';    Info='' }
+    @{ Key='quit'; Label='Q. Salir sin guardar';  Info='' }
+  )
+  Chk "'1' elige la primera entrada sin navegar" ((Invoke-Menu -Entries $conAtajos -Keys @('1')) -eq 'appx')
+  Chk "'2' elige la segunda"                     ((Invoke-Menu -Entries $conAtajos -Keys @('2')) -eq 'svc')
+  Chk "'G' elige GENERAR"                        ((Invoke-Menu -Entries $conAtajos -Keys @('G')) -eq 'gen')
+  Chk "'g' en minuscula tambien"                 ((Invoke-Menu -Entries $conAtajos -Keys @('g')) -eq 'gen')
+  Chk "'S' elige Guardar"                        ((Invoke-Menu -Entries $conAtajos -Keys @('S')) -eq 'save')
+  Chk "'Q' sigue devolviendo `$null (no 'quit')" ($null -eq (Invoke-Menu -Entries $conAtajos -Keys @('Q'))) `
+      '-> Q ya devolvia $null antes de los atajos; el MAIN trata $null y quit igual, pero no se cambia'
+  Chk 'una tecla sin entrada que matchee se IGNORA (no elige nada al azar)' `
+      ((Invoke-Menu -Entries $conAtajos -Keys @('Z','Enter')) -eq 'appx') `
+      '-> Z no matchea ninguna, el menu sigue esperando y el Enter elige donde estaba el cursor'
+  Chk 'el atajo NO se confunde con un separador' `
+      ((Invoke-Menu -Entries $conAtajos -Keys @('-','Enter')) -eq 'appx')
+}
+
+# ===========================================================================
+#  10-bis. EL BANNER DEL MENU -- y por que se apaga en consola baja
+#
+#  El banner existe porque el menu no decia lo unico que hay que saber para
+#  usarlo: que la seleccion YA viene con el perfil recomendado y que con G
+#  alcanza. Sin eso, el que abre la TUI por primera vez cree que arranca de
+#  cero y se pone a marcar 200 items.
+#
+#  Y se apaga en consola baja por una razon MEDIDA, no por prolijidad: este
+#  menu dibuja TODAS sus entradas (no pagina como las checklists), asi que ya
+#  usaba el presupuesto completo de Resolve-TuiLayout -- 15 lineas de chrome
+#  + 14 de contenido = 29. Tres lineas mas empujan el FOOTER fuera de
+#  pantalla, y el footer es el unico lugar donde dice como salir.
+# ===========================================================================
+Test-Case 'banner del menu principal' {
+  # Menu del tamano REAL del de LunaticOS.ps1: 12 entradas, 2 separadores.
+  $full = @(
+    @{ Key='appx';  Label='1. Apps preinstaladas a quitar';   Info='18 marcadas'; Note='n' }
+    @{ Key='svc';   Label='2. Servicios a deshabilitar';      Info='42 marcados'; Note='n' }
+    @{ Key='feat';  Label='3. Features y capabilities';       Info='18 marcadas'; Note='n' }
+    @{ Key='flags'; Label='4. Opciones del sistema';          Info='7 activas';   Note='n' }
+    @{ Key='pers';  Label='5. Personalizacion (tema, color)'; Info='4 marcadas';  Note='n' }
+    @{ Key='apps';  Label='6. Programas a instalar';          Info='12 marcados'; Note='n' }
+    @{ Key='cuenta';Label='7. Cuenta de usuario';             Info="crear 'pato'";Note='n' }
+    @{ Key='-' }
+    @{ Key='gen';   Label='G. GENERAR LA ISO (guarda el perfil)'; Info='~45-60 min'; Accent=$true; Note='n' }
+    @{ Key='save';  Label='S. Guardar perfil y salir';        Info='sin generar';  Note='n' }
+    @{ Key='-' }
+    @{ Key='quit';  Label='Q. Salir sin guardar';             Info='descarta';     Note='n' }
+  )
+  $banner = @('linea uno del banner', 'linea dos', 'linea tres')
+
+  # Dibuja el menu con un tamano de consola simulado y devuelve las lineas.
+  #
+  # OJO con el filtro: se sale del menu con Q, y Show-TuiMenu devuelve $null en ese
+  # caso. Un `$_.GetType()` sobre ese $null TIRA -- y el test se anota como EXCEPCION
+  # en vez de medir el frame. Es la misma trampa que Invoke-Input ya documenta.
+  # `-is` no explota con $null: devuelve $false y sigue.
+  function Get-MenuFrame([int]$H, [int]$W = 120) {
+    $Global:TuiSizeProvider = [scriptblock]::Create("@{ Width = $W; Height = $H }")
+    try {
+      Send-TuiKeys @('Q')
+      $raw = @(Show-TuiMenu -Entries $full -Subtitle 'test' -Banner $banner 6>&1)
+      @($raw | Where-Object { $_ -is [System.Management.Automation.InformationRecord] } |
+               ForEach-Object { "$($_.MessageData.Message)" })
+    } finally { $Global:TuiSizeProvider = $null }
+  }
+
+  $alto  = Get-MenuFrame 40
+  $justo = Get-MenuFrame 27
+  $bajo  = Get-MenuFrame 26
+  $min   = Get-MenuFrame 24
+
+  $tieneBanner = { param($f) [bool](@($f | Where-Object { $_ -match 'linea uno del banner' }).Count) }
+  $tieneFooter = { param($f) [bool](@($f | Where-Object { $_ -match 'flechas mover' }).Count) }
+
+  Chk 'con consola alta el banner se dibuja' (& $tieneBanner $alto)
+  Chk 'las TRES lineas del banner se dibujan, no solo la primera' `
+      ((@($alto | Where-Object { $_ -match 'linea (uno del banner|dos|tres)' }).Count) -eq 3)
+  Chk 'a 27 filas el banner todavia entra' (& $tieneBanner $justo)
+  Chk 'a 26 filas el banner SE APAGA' (-not (& $tieneBanner $bajo)) `
+      ("-> dibujo " + $bajo.Count + " lineas en 26 filas: el footer se iria de pantalla")
+  Chk 'a 24 filas tampoco se dibuja' (-not (& $tieneBanner $min))
+
+  # Lo que el banner NUNCA puede costar: el footer dice como salir.
+  Chk 'el footer sobrevive con consola alta'  (& $tieneFooter $alto)
+  Chk 'el footer sobrevive a 27 filas'        (& $tieneFooter $justo)
+  Chk 'el footer sobrevive a 26 filas'        (& $tieneFooter $bajo)
+  Chk 'el footer sobrevive a 24 filas'        (& $tieneFooter $min)
+
+  # El frame entero tiene que entrar en la consola, en las cuatro medidas.
+  Chk 'el frame entra en 27 filas' ($justo.Count -le 27) ("-> " + $justo.Count + " lineas")
+  Chk 'el frame entra en 26 filas' ($bajo.Count  -le 26) ("-> " + $bajo.Count  + " lineas")
+  Chk 'el frame entra en 24 filas' ($min.Count   -le 24) ("-> " + $min.Count   + " lineas")
+
+  # Sin -Banner el menu se dibuja igual que siempre: el parametro es opcional.
+  Send-TuiKeys @('Enter')
+  $sinBanner = Show-TuiMenu -Entries $full -Subtitle 'test' 6>$null
+  Chk 'sin -Banner el menu sigue funcionando (parametro opcional)' ($sinBanner -eq 'appx')
+
+  # El ancho no lo puede romper una linea larga de banner: Write-TuiLine recorta.
+  $Global:TuiSizeProvider = [scriptblock]::Create('@{ Width = 120; Height = 40 }')
+  try {
+    Send-TuiKeys @('Q')
+    $raw = @(Show-TuiMenu -Entries $full -Subtitle 'test' -Banner @('x' * 200) 6>&1)
+    $lineas = @($raw | Where-Object { $_ -is [System.Management.Automation.InformationRecord] } |
+                       ForEach-Object { "$($_.MessageData.Message)" })
+    Chk 'una linea de banner mas larga que el ancho se RECORTA, no desborda' `
+        ((Get-MaxLineLength $lineas) -le 78) ("-> ancho maximo " + (Get-MaxLineLength $lineas))
+  } finally { $Global:TuiSizeProvider = $null }
 }
 
 # ===========================================================================

@@ -1,0 +1,20 @@
+﻿DarkCyan   | ==============================================================================
+Cyan       |   LunaticOS  ~  constructor de ISO de Windows 11
+DarkGray   |   snapshot de menu
+DarkCyan   | ==============================================================================
+Gray       | 
+Green      |   primera linea del banner
+Green      |   segunda linea del banner
+Gray       | 
+Yellow     | >  1. opcion uno                              3 marcadas
+Gray       |    2. opcion dos                              0 marcadas
+DarkGray   |   --------------------------------------------------------------------------
+Green      |    G. ACCION PRINCIPAL                        ~45 min
+DarkGray   |   --------------------------------------------------------------------------
+Gray       |    Q. Salir                                   descarta
+Gray       | 
+DarkGray   | ------------------------------------------------------------------------------
+Cyan       |   Nota de la opcion uno.
+Gray       | 
+DarkGray   | ------------------------------------------------------------------------------
+DarkGray   |   flechas mover   ENTER elegir   Q salir
