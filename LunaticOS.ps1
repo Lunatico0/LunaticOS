@@ -70,6 +70,7 @@ $AppxNotes = @{
   'Microsoft.WindowsSoundRecorder'          = 'Grabadora de voz.'
   'Microsoft.YourPhone'                     = 'Phone Link (vincular Android).'
   'MSTeams'                                 = 'Teams preinstalado. Si lo usas para laburo, instala el de winget aparte.'
+  '7EE7776C.LinkedInforWindows'             = 'LinkedIn. No viene en la imagen de 25H2: lo instala la STORE sola despues del primer arranque. Medido instalado en la VM el 2026-08-08. La fase 12 lo vuelve a quitar si reaparece.'
   # --- Zona gris: leer antes de sacar ---
   'Microsoft.BingSearch'                    = 'ZONA GRIS: DEJALO. Sacarlo puede romper el buscador del menu Inicio. El ruido de Bing se apaga por tweak (BingSearchEnabled=0), sin riesgo.'
   'Microsoft.ZuneMusic'                     = 'ZONA GRIS: DEJALO. Es el reproductor de archivos locales. Sin el no abris un mp3/mp4 del disco. Spotify NO lo reemplaza.'
@@ -1616,6 +1617,36 @@ function Invoke-SelfTest {
     Chk 'sin LUNATICOS_PROFILE vuelven los defaults (fase corrida a mano)' `
         (@($Global:AppxRemove).Count -eq $appxDefaults) `
         ("-> quedaron " + @($Global:AppxRemove).Count + ", se esperaban $appxDefaults")
+
+    # ====================================================================
+    #  EL MERGE ES POR CLAVE: un perfil VIEJO tiene que recibir los items
+    #  que se agregaron a config.ps1 DESPUES de que el usuario lo guardo.
+    #
+    #  Bug real del 2026-08-08: la primera version del override REEMPLAZABA
+    #  la lista, asi que al agregar LinkedIn a $AppxRemove, cualquiera con un
+    #  perfil.json anterior no lo recibia nunca. Su perfil no tiene esa clave,
+    #  la lista se reemplaza por lo que el JSON dice, y el item nuevo
+    #  desaparece sin que nadie lo note.
+    # ====================================================================
+    $pViejo = New-DefaultProfile
+    $unoQueSacamos = @($pViejo.appx.Keys)[0]
+    # Se simula un perfil guardado ANTES: se le borran DOS claves, una que va a
+    # seguir en los defaults (tiene que volver) y se desmarca otra (tiene que
+    # respetarse la decision del usuario).
+    $unoDesmarcado = @($pViejo.appx.Keys)[1]
+    $pViejo.appx[$unoDesmarcado] = $false
+    $pViejo.appx.Remove($unoQueSacamos)
+    Export-Profile $pViejo $tmpPerfil 'selftest-merge'
+
+    $env:LUNATICOS_PROFILE = $tmpPerfil
+    . "$root\scripts\config.ps1"
+    Chk 'un item AUSENTE del perfil viejo se toma del DEFAULT (no desaparece)' `
+        (@($Global:AppxRemove) -contains $unoQueSacamos) `
+        ("-> '$unoQueSacamos' no llego. Es el bug de LinkedIn: agregar algo a config.ps1 " +
+         "no le sirve a nadie con perfil guardado")
+    Chk 'y un item DESMARCADO por el usuario sigue desmarcado (gana el perfil)' `
+        (@($Global:AppxRemove) -notcontains $unoDesmarcado) `
+        ("-> '$unoDesmarcado' se marco igual: el default le paso por encima a la decision del usuario")
 
     # Un perfil roto tiene que ABORTAR, no seguir con defaults en silencio: una ISO
     # que no es la pedida es peor que un build que falla en el segundo 1.

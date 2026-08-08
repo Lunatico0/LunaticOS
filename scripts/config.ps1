@@ -39,6 +39,11 @@ $Global:AppxRemove = @(
   'Microsoft.WindowsSoundRecorder'
   'Microsoft.YourPhone'                      # Phone Link
   'MSTeams'                                  # Teams preinstalado (reinstalar el de laburo por winget)
+
+  # --- Agregado el 2026-08-08: medido INSTALADO en la VM y no estaba en la lista ---
+  # No viene provisioned en 25H2: lo instala la Store despues del primer arranque,
+  # igual que DevHome y CrossDevice. Por eso la fase 12 tambien lo vigila.
+  '7EE7776C.LinkedInforWindows'              # LinkedIn
 )
 
 # --- APPX BLINDADAS: NUNCA se tocan aunque aparezcan en Remove (guarda de seguridad) ---
@@ -465,19 +470,54 @@ if ($env:LUNATICOS_PROFILE) {
     @($nodo.PSObject.Properties | Where-Object { $_.Value } | ForEach-Object { $_.Name })
   }
 
-  $appxDelPerfil = @(Get-PerfilMarcados $perfilJson.appx)
-  $svcDelPerfil  = @(Get-PerfilMarcados $perfilJson.servicios)
-  $featDelPerfil = @(Get-PerfilMarcados $perfilJson.features)
+  # ------------------------------------------------------------------------
+  #  EL MERGE ES POR CLAVE, NO POR LISTA. Y esto NO es un detalle.
+  #
+  #  La primera version de este bloque hacia `$AppxRemove = <los marcados del
+  #  JSON>`, o sea REEMPLAZABA la lista. El bug que eso causa: el dia que se
+  #  agrega un appx nuevo a config.ps1 (paso el 2026-08-08 con LinkedIn),
+  #  cualquiera con un perfil.json guardado ANTES no lo recibe nunca. Su perfil
+  #  no tiene esa clave, la lista se reemplaza por lo que el JSON dice, y el
+  #  item nuevo desaparece sin que nadie lo note.
+  #
+  #  Import-Profile ya resuelve esto: arranca de New-DefaultProfile y pisa solo
+  #  las claves que el archivo trae. Aca se hace lo mismo, clave por clave:
+  #
+  #    el JSON trae la clave  -> gana el JSON  (respeta lo que el usuario eligio,
+  #                                             incluido DESMARCAR algo)
+  #    el JSON no la trae     -> gana el default (los items agregados despues de
+  #                                               que el usuario guardo el perfil)
+  #
+  #  Asi convive "elegir cero" (el usuario desmarco todo: el JSON trae las claves
+  #  en false y ganan) con "config.ps1 crecio" (claves nuevas, gana el default).
+  # ------------------------------------------------------------------------
+  function script:Merge-PerfilLista($nodo, $defaults, [string]$prefijo = '') {
+    if ($null -eq $nodo) { return @($defaults) }   # seccion ausente: defaults intactos
+    $delJson = @{}
+    foreach ($pr in $nodo.PSObject.Properties) { $delJson[$pr.Name] = [bool]$pr.Value }
 
-  # Se pisa SOLO si el perfil trae la seccion. Un perfil viejo al que le falta una
-  # categoria entera tiene que quedarse con los defaults, no con una lista vacia:
-  # es la misma regla de retrocompatibilidad que Import-Profile ya respeta.
-  if ($null -ne $perfilJson.appx)      { $Global:AppxRemove      = $appxDelPerfil }
-  if ($null -ne $perfilJson.servicios) { $Global:ServicesDisable = $svcDelPerfil }
-  if ($null -ne $perfilJson.features) {
-    $Global:CapabilitiesRemove = @($featDelPerfil | Where-Object { $_ -like 'cap:*'  } | ForEach-Object { $_ -replace '^cap:'  })
-    $Global:FeaturesDisable    = @($featDelPerfil | Where-Object { $_ -like 'feat:*' } | ForEach-Object { $_ -replace '^feat:' })
+    $res = New-Object System.Collections.ArrayList
+    # 1) los defaults que el JSON no menciona, o que el JSON marca en true
+    foreach ($d in @($defaults)) {
+      $k = if ($prefijo) { "$prefijo$d" } else { $d }
+      if ($delJson.ContainsKey($k)) { if ($delJson[$k]) { [void]$res.Add($d) } }
+      else                          { [void]$res.Add($d) }
+    }
+    # 2) lo que el JSON marca en true y no esta en los defaults (el usuario
+    #    agrego a mano algo de la zona gris, o de los opcionales)
+    foreach ($k in $delJson.Keys) {
+      if (-not $delJson[$k]) { continue }
+      if ($prefijo -and $k -notlike "$prefijo*") { continue }
+      $sinPrefijo = if ($prefijo) { $k -replace ("^" + [regex]::Escape($prefijo)) } else { $k }
+      if (@($defaults) -notcontains $sinPrefijo) { [void]$res.Add($sinPrefijo) }
+    }
+    @($res)
   }
+
+  $Global:AppxRemove         = @(Merge-PerfilLista $perfilJson.appx      $Global:AppxRemove)
+  $Global:ServicesDisable    = @(Merge-PerfilLista $perfilJson.servicios $Global:ServicesDisable)
+  $Global:CapabilitiesRemove = @(Merge-PerfilLista $perfilJson.features  $Global:CapabilitiesRemove 'cap:')
+  $Global:FeaturesDisable    = @(Merge-PerfilLista $perfilJson.features  $Global:FeaturesDisable    'feat:')
   # Los flags se MERGEAN, no se reemplazan: si el perfil no trae una clave nueva
   # (perfil viejo + flag agregado despues), tiene que conservar su default.
   if ($null -ne $perfilJson.flags) {
