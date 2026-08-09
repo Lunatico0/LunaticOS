@@ -75,7 +75,7 @@ param(
 # equivocarse igual que el producto y darle la razon al bug.
 . "$PSScriptRoot\lib.ps1"
 
-$iso  = Join-Path $CFG.Root 'work\Win11_25H2_Pro_debloat.iso'
+$iso  = $CFG.IsoOutTest   # SIEMPRE la de test: este script arma la VM de prueba
 # El VHDX lleva el nombre de la VM: si no, dos VMs de test se pelean por el mismo
 # archivo y -Reset de una te borra el disco de la otra.
 $vhdx = Join-Path $CFG.Root "work\$VMName.vhdx"

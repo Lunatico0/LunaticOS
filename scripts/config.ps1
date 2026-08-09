@@ -18,6 +18,34 @@ $Global:CFG = @{
   Oscdimg  = Join-Path $adk  'Oscdimg\oscdimg.exe'
 }
 
+# ===========================================================================
+#  LOS DOS NOMBRES DE ISO DE SALIDA. NO ES COSMETICO.
+#
+#  Hasta el 2026-08-08 el pipeline escribia SIEMPRE en
+#  work\Win11_25H2_Pro_debloat.iso, sin importar si el build llevaba el
+#  autounattend de PRODUCCION o el de TEST. Dos consecuencias, las dos malas:
+#
+#  1) Correr el E2E DESTRUIA la ISO de produccion sin avisar. Paso: cuatro
+#     corridas del E2E se comieron la ISO buena del 31/07, y recien se noto al
+#     ir a grabar el pendrive.
+#
+#  2) Peor: quedaban INDISTINGUIBLES. Si encontras un
+#     Win11_25H2_Pro_debloat.iso en work\, no hay forma de saber si lleva
+#     autounattend-test.xml, que FORMATEA EL DISCO 0 SIN PREGUNTAR. Esa
+#     diferencia se paga con los datos del disco, no con un rebuild.
+#
+#  Los dos nombres contienen "debloat" A PROPOSITO: la fase 00 busca la ISO
+#  original con un filtro que excluye *debloat*, asi que ninguna de las dos
+#  puede ser confundida con la entrada del pipeline.
+# ===========================================================================
+$Global:CFG.IsoOutProd = Join-Path $root 'work\Win11_25H2_Pro_debloat.iso'
+$Global:CFG.IsoOutTest = Join-Path $root 'work\Win11_25H2_Pro_debloat-TEST.iso'
+
+# Cual escribe el build de ESTA corrida. La misma variable de entorno que decide
+# que autounattend se inyecta (fase 8) decide el nombre del archivo: asi el
+# contenido y el nombre no pueden desincronizarse.
+$Global:CFG.IsoOut = if ($env:LUNATICOS_TEST_UNATTEND) { $Global:CFG.IsoOutTest } else { $Global:CFG.IsoOutProd }
+
 # --- APPX a REMOVER (perfil de referencia: dev pesado + FPS competitivo) ---
 #     Comenta con # cualquier linea para CONSERVAR esa app.
 $Global:AppxRemove = @(

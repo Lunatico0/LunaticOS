@@ -608,7 +608,7 @@ function Clear-E2EMontajes {
   $hechos = @()
   $cands = @(
     (Join-Path $root ('work\' + $VMName + '.vhdx'))
-    (Join-Path $root 'work\Win11_25H2_Pro_debloat.iso')
+    $CFG.IsoOutTest
   )
   # La ISO original tambien: la fase 00 la monta para copiar el arbol.
   try { $src = Find-SourceIso; if ($src) { $cands += $src } } catch { }
@@ -637,7 +637,7 @@ function Clear-E2EDvd {
   if (-not (Get-Command Get-VM -ErrorAction SilentlyContinue)) { return $hechos }
   $vm = Get-VM -Name $VMName -ErrorAction SilentlyContinue
   if (-not $vm) { return $hechos }
-  $iso = Join-Path $root 'work\Win11_25H2_Pro_debloat.iso'
+  $iso = $CFG.IsoOutTest
   $dvd = @(Get-VMDvdDrive -VMName $VMName -ErrorAction SilentlyContinue | Where-Object { $_.Path -eq $iso })
   if ($dvd.Count -eq 0) { return $hechos }
 
@@ -872,7 +872,7 @@ function Invoke-E2ECapa3 {
 
   # --- liberar la ISO de salida. oscdimg falla con Error 32 si alguien la tiene
   #     abierta, y eso pasa AL FINAL de un build de 45 minutos.
-  $iso = Join-Path $root 'work\Win11_25H2_Pro_debloat.iso'
+  $iso = $CFG.IsoOutTest
   foreach ($h in (Clear-E2EDvd -Force)) { $ev += $h; Write-E2E ('  ' + $h) 'Yellow' }
   if (Test-E2EHyperV) {
     $ajenas = @()
@@ -985,9 +985,9 @@ function Invoke-E2ECapa4 {
     Set-E2ERes 4 'SIN MEDIR' 'no esta el modulo de Hyper-V en este host' `
       @('Enable-WindowsOptionalFeature -Online -FeatureName Microsoft-Hyper-V -All') $t0; return
   }
-  $iso = Join-Path $root 'work\Win11_25H2_Pro_debloat.iso'
+  $iso = $CFG.IsoOutTest
   if (-not (Test-Path $iso)) {
-    Set-E2ERes 4 'SIN MEDIR' 'no existe work\Win11_25H2_Pro_debloat.iso: corre la capa 3 primero (-From 3)' @() $t0; return
+    Set-E2ERes 4 'SIN MEDIR' ("no existe $(Split-Path $CFG.IsoOutTest -Leaf): corre la capa 3 primero (-From 3)") @() $t0; return
   }
   if ($script:Res[3].Estado -ne 'PASA') {
     $ev += 'OJO: la capa 3 no corrio en esta corrida. Asumo que la ISO que hay es de TEST y se armo con este mismo perfil.'

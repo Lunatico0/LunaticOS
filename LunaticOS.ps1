@@ -1671,6 +1671,61 @@ function Invoke-SelfTest {
     . "$root\scripts\config.ps1"
   }
 
+  # ======================================================================
+  #  LA ISO DE TEST Y LA DE PRODUCCION NO PUEDEN LLAMARSE IGUAL
+  #
+  #  Hasta el 2026-08-08 el pipeline escribia siempre en
+  #  Win11_25H2_Pro_debloat.iso, con o sin autounattend de test. Dos danos:
+  #
+  #  1) Correr el E2E DESTRUIA la ISO de produccion sin avisar. Paso de verdad:
+  #     cuatro corridas se comieron la del 31/07 y se noto al ir a grabar el
+  #     pendrive.
+  #  2) Peor: quedaban INDISTINGUIBLES. Un Win11_25H2_Pro_debloat.iso en work\
+  #     puede llevar autounattend-test.xml, que FORMATEA EL DISCO 0 SIN
+  #     PREGUNTAR. Eso no se paga con un rebuild, se paga con los datos.
+  # ======================================================================
+  Chk 'la ISO de produccion y la de test tienen nombres DISTINTOS' `
+      ($CFG.IsoOutProd -ne $CFG.IsoOutTest) `
+      '-> el E2E volveria a sobrescribir la ISO buena'
+  Chk 'el nombre de la de test se distingue a simple vista (dice TEST)' `
+      ((Split-Path $CFG.IsoOutTest -Leaf) -match 'TEST')
+  # Las dos tienen que contener "debloat": la fase 00 busca la ISO ORIGINAL con un
+  # filtro que excluye *debloat*, asi que sin eso el pipeline podria tomar su
+  # propia salida como entrada y debloatear algo ya debloateado.
+  Chk 'las dos contienen "debloat" (la fase 00 las excluye como entrada)' `
+      (((Split-Path $CFG.IsoOutProd -Leaf) -like '*debloat*') -and
+       ((Split-Path $CFG.IsoOutTest -Leaf) -like '*debloat*'))
+  $f00 = Get-Content (Join-Path $root 'scripts\00-prepare-wim.ps1') -Raw
+  Chk 'y la fase 00 sigue excluyendo *debloat* al buscar la ISO original' `
+      ($f00 -match "notlike\s+'\*debloat\*'")
+
+  # $CFG.IsoOut tiene que seguir a la variable de entorno, no ser un tercer nombre.
+  $envAntesIso = $env:LUNATICOS_TEST_UNATTEND
+  try {
+    $env:LUNATICOS_TEST_UNATTEND = $null
+    . "$root\scripts\config.ps1"
+    Chk 'sin LUNATICOS_TEST_UNATTEND, IsoOut apunta a PRODUCCION' ($CFG.IsoOut -eq $CFG.IsoOutProd) `
+        ("-> apunta a " + (Split-Path $CFG.IsoOut -Leaf))
+    $env:LUNATICOS_TEST_UNATTEND = '1'
+    . "$root\scripts\config.ps1"
+    Chk 'con LUNATICOS_TEST_UNATTEND=1, IsoOut apunta a TEST' ($CFG.IsoOut -eq $CFG.IsoOutTest) `
+        ("-> apunta a " + (Split-Path $CFG.IsoOut -Leaf))
+  }
+  finally {
+    $env:LUNATICOS_TEST_UNATTEND = $envAntesIso
+    . "$root\scripts\config.ps1"
+  }
+
+  # Y que nadie vuelva a hardcodear el nombre en un script del pipeline.
+  foreach ($f in @('scripts\09-build-iso.ps1','scripts\test-e2e.ps1','scripts\test-vm.ps1')) {
+    $t = Get-Content (Join-Path $root $f) -Raw
+    $hard = @($t -split "`r?`n" | Where-Object {
+      $_ -like '*Win11_25H2_Pro_debloat*' -and $_ -notmatch '^\s*#' -and $_ -notmatch 'IsoOut'
+    })
+    Chk "$f no hardcodea el nombre de la ISO (usa `$CFG.IsoOut*)" ($hard.Count -eq 0) `
+        ("-> " + (($hard | ForEach-Object { $_.Trim() }) -join ' | '))
+  }
+
   # --- Las fases que el pipeline invoca tienen que existir ---
   foreach ($f in @('00-prepare-wim.ps1','01-remove-appx.ps1','02-remove-onedrive.ps1',
                    '03-privacy-policies.ps1','04-services.ps1','05-ui-tweaks.ps1',
@@ -1839,7 +1894,10 @@ switch ($action) {
     $ok = Invoke-Pipeline
     Write-Host ''
     if ($ok) {
-      $iso = Join-Path $root 'work\Win11_25H2_Pro_debloat.iso'
+      # $CFG.IsoOut, no un nombre fijo: si el build corrio en modo test la ISO se
+      # llama distinto, y mostrar la ruta equivocada aca haria buscar un archivo
+      # que no existe (o peor, encontrar una ISO vieja y creer que es la nueva).
+      $iso = $CFG.IsoOut
       Write-Host '  ================== ISO LISTA ==================' -ForegroundColor Green
       if (Test-Path $iso) {
         Write-Host ("  {0}" -f $iso) -ForegroundColor White

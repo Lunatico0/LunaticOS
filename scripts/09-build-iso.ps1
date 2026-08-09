@@ -12,9 +12,17 @@ $mount   = $CFG.Mount
 $build   = $CFG.IsoBuild
 $dism    = $CFG.Dism
 $oscdimg = $CFG.Oscdimg
-$outIso  = Join-Path (Join-Path $CFG.Root 'work') 'Win11_25H2_Pro_debloat.iso'
+# El nombre lo decide config.ps1 segun LUNATICOS_TEST_UNATTEND: la misma variable
+# que elige el autounattend elige el archivo, asi el contenido y el nombre no se
+# pueden desincronizar. Antes era un nombre fijo y el E2E se comia la ISO buena.
+$outIso  = $CFG.IsoOut
 
 Write-Host "== Fase 9: cerrar WIM + rearmar ISO ==" -ForegroundColor Cyan
+if ($env:LUNATICOS_TEST_UNATTEND) {
+  Write-Step "MODO TEST: la salida es $(Split-Path $outIso -Leaf) (lleva autounattend-test.xml: FORMATEA EL DISCO 0 SIN PREGUNTAR)" 'Yellow'
+} else {
+  Write-Step "modo PRODUCCION: la salida es $(Split-Path $outIso -Leaf)" 'Green'
+}
 
 # 1) Commit + unmount (solo si sigue montado)
 if (Test-Path (Join-Path $mount 'Windows')) {
