@@ -1,10 +1,29 @@
-# win11-debloat-iso
+# LunaticOS
 
 Debloat **offline** de Windows 11 25H2: se edita la imagen (`install.wim`) **dentro de la ISO original**
 antes de instalar, así el bloat **nunca llega al disco**. No se toca un SO ya corriendo.
 
-> Estado: ✅ **funcionando**. Pipeline completo (9 fases) y probado en VM: instala desatendido con cuenta
+> Estado: ✅ **funcionando**. Pipeline completo (13 fases) y probado en VM: instala desatendido con cuenta
 > local, sin bloat, sin Edge. Ver `docs/decisiones.md` para el porqué de cada decisión.
+
+## Arranque rápido (un solo comando)
+
+Abrí PowerShell y pegá:
+
+```powershell
+irm https://github.com/Lunatico0/LunaticOS/releases/latest/download/install.ps1 | iex
+```
+
+Baja el último release a la unidad con más espacio libre (`<unidad>:\LunaticOS`), te abre la carpeta
+`work\` para que pongas la ISO y lanza la TUI como Administrador.
+
+**Lo único que hacés a mano:** bajar la ISO oficial de Windows 11 x64 de
+[microsoft.com/software-download/windows11](https://www.microsoft.com/software-download/windows11)
+(*"Descargar imagen de disco (ISO) de Windows 11 para dispositivos x64"*) y dejarla en `work\`.
+Necesitás ~35 GB libres en esa unidad (25 de build + la ISO).
+
+> Apunta al **release**, no a `main`: lo que corrés como Administrador es una versión fija y publicada,
+> no lo último que se pusheó.
 
 ## Por qué offline y no post-install
 
@@ -60,10 +79,10 @@ La herramienta hace todo:
    Con `*` en lo recomendado y **la explicación de cada ítem siempre a la vista**.
 3. **`perfil.json`** — guarda tu selección. Es **compartible**: le pasás el archivo a un compa y
    genera la misma ISO que vos, sin volver a elegir nada.
-4. **Pipeline** — corre las 12 fases y arma la ISO.
+4. **Pipeline** — corre las 13 fases y arma la ISO.
 
 ```powershell
-.\LunaticOS.ps1 -SelfTest    # 44 validaciones, sin UI ni build
+.\LunaticOS.ps1 -SelfTest    # valida catálogos, perfil y fases, sin UI ni build
 .\LunaticOS.ps1 -Apply       # usa el perfil.json existente y genera, sin abrir la TUI
 ```
 
@@ -81,9 +100,15 @@ cd scripts
 .\05-ui-tweaks.ps1          # explorer/taskbar dev-friendly, sin ads (DEFAULT hive)
 .\06-features.ps1           # IE, WMP legacy, WorkFolders, etc. (DISM)
 .\07-remove-edge.ps1        # navegador Edge fuera (WebView2 se CONSERVA)
+.\10-personalizar.ps1       # tema, color de acento, wallpaper (defaults, no policies)
+.\11-apps.ps1               # programas a instalar por winget en el primer arranque
+.\12-reincidentes.ps1       # tarea que vuelve a quitar los appx que reinstala Windows
 .\08-inject-runtime.ps1     # SetupComplete.cmd (tasks telemetria) + autounattend.xml
 .\09-build-iso.ps1          # cierra el WIM y arma la ISO booteable
 ```
+
+La 12 va **antes** de la 08 a propósito: la 08 copia `SetupComplete.cmd` al WIM, y ese archivo programa
+la tarea que apunta al script que genera la 12. Al revés, la tarea apunta a un archivo que no existe.
 
 **Para ajustar sin programar:** editá `scripts\config.ps1` — listas de appx/servicios/features/capabilities
 y flags (`ShowWeatherWidget`, `RemoveOneDrive`, etc.). Cada compa lo tunea a su gusto sin tocar la lógica.
